@@ -319,25 +319,56 @@ class PipelineAPI:
             self._log("[INFO] No data rows to push to Airtable")
             return
 
-        # Column names from the output (row index -> field name).
-        # These MUST match the Airtable table field names EXACTLY (case-sensitive).
-        field_names = ["Row", "Truck#", "PO#", "By Whom", "Date Move",
+        # CSV column index -> our internal name.
+        csv_columns = ["Row", "Truck#", "PO#", "By Whom", "Date Move",
                        "Machine#", "Hour Meter", "Machine Description",
                        "From", "To", "Order#"]
 
-        # Which columns to push (configurable, defaults to all).
-        selected = airtable.get("columns", field_names)
+        # Default mapping: our column name -> Airtable field name.
+        # Users can override this in config via airtable.field_map.
+        default_map = {
+            "Truck#": "Truck #",
+            "PO#": "PO#",
+            "By Whom": "By Whom",
+            "Date Move": "Date Move",
+            "Machine#": "Machine#",
+            "Hour Meter": "Hour Meter",
+            "Machine Description": "Machine Description",
+            "From": "From Job#",
+            "To": "To Job #",
+            "Order#": "Order #",
+        }
+        field_map = airtable.get("field_map", default_map)
+
+        # Which columns to push (configurable, defaults to all mapped ones).
+        selected = airtable.get("columns", list(field_map.keys()))
 
         records = []
         for row in lines[2:]:  # Skip 2 header rows.
             if not row or not any(row):
                 continue
             fields = {}
-            for i, name in enumerate(field_names):
-                if i < len(row) and name in selected:
+            for i, col_name in enumerate(csv_columns):
+                if i < len(row) and col_name in selected and col_name in field_map:
+                    airtable_field = field_map[col_name]
                     val = row[i].strip()
                     if val:
-                        fields[name] = val
+                        # Type coercion for Airtable field types.
+                        if airtable_field == "Hour Meter":
+                            try:
+                                val = float(val)
+                            except (ValueError, TypeError):
+                                continue  # Skip non-numeric meter values
+                        elif airtable_field == "Date Move":
+                            # Convert "1-Apr" or "26-Dec" to ISO date.
+                            try:
+                                from datetime import datetime
+                                dt = datetime.strptime(val, "%d-%b")
+                                dt = dt.replace(year=datetime.now().year)
+                                val = dt.strftime("%Y-%m-%d")
+                            except ValueError:
+                                pass  # Send as-is if parsing fails
+                        fields[airtable_field] = val
             if fields:
                 records.append({"fields": fields})
 
