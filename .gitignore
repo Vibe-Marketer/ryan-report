@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+.bg-shell/
+state/generated_serial_lookup.csv
+state/unresolved_serials.csv
+execution/browser_config.json
+orchestration/*.log
