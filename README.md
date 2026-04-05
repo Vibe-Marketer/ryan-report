@@ -75,11 +75,13 @@ Windows wrapper:
 execution\run_pipeline.bat --skip-download
 ```
 
-Browser download runner:
+Browser download runner (with profile‑lock fallback):
 
 ```bash
 python3 execution/download_reports.py --config execution/browser_config.example.json
 ```
+
+The downloader now attempts to use the configured Chromium/Comet profile. If the profile is already open and locked, it automatically creates a temporary copy of the profile and runs the automation against that copy, logging a short informational message. This makes the automation reliable even when the user has the browser open for other tasks.
 
 ## Current Known Gaps
 
