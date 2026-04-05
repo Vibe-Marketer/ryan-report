@@ -1,4 +1,4 @@
-"""Build the Ryan Report desktop app with PyInstaller.
+"""Build the Catom desktop app with PyInstaller.
 
 Usage:
     python app/build.py          # Build for current platform
@@ -30,7 +30,7 @@ def _find_playwright_driver() -> str | None:
 
 
 def build(debug: bool = False) -> None:
-    name = "Ryan Report"
+    name = "Catom"
     main_script = str(APP_DIR / "main.py")
     sep = os.pathsep
 

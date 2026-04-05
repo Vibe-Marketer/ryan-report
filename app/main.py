@@ -360,7 +360,7 @@ class PipelineAPI:
 def main() -> None:
     api = PipelineAPI()
     window = webview.create_window(
-        "Ryan Report",
+        "Catom",
         _ui_path(),
         js_api=api,
         width=800,
