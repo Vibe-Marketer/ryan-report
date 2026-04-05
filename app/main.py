@@ -266,21 +266,28 @@ class PipelineAPI:
     # -- Airtable --
 
     def _parse_airtable_url(self, url: str) -> tuple[str, str]:
-        """Extract base ID and table name/ID from an Airtable URL.
-        Handles: https://airtable.com/appXXXXX/tblYYYYY/...
+        """Extract base ID and table ID from an Airtable URL.
+
+        Airtable IDs: base = app + 17 alphanum, table = tbl + 14 alphanum.
+        URL format: https://airtable.com/appXXX.../tblYYY.../...
         """
         import re
-        m = re.search(r"airtable\.com/(app\w+)/(tbl\w+)", url)
-        if m:
-            return m.group(1), m.group(2)
-        # Try simpler format: just base/table IDs pasted directly.
-        parts = url.strip().strip("/").split("/")
-        base = next((p for p in parts if p.startswith("app")), "")
-        table = next((p for p in parts if p.startswith("tbl")), "")
-        return base, table
+        # Match app and tbl IDs anywhere in the string.
+        base_m = re.search(r"(app[A-Za-z0-9]{14,21})", url)
+        table_m = re.search(r"(tbl[A-Za-z0-9]{14,21})", url)
+        base_id = base_m.group(1) if base_m else ""
+        table_id = table_m.group(1) if table_m else ""
+        return base_id, table_id
 
     def _push_to_airtable(self, cfg: dict) -> None:
-        """Push the latest generated report rows to Airtable."""
+        """Push the latest generated report rows to Airtable.
+
+        Uses the Airtable Web API v0 with Personal Access Token auth.
+        - Max 10 records per batch (API limit)
+        - 300ms delay between batches (rate limit: 5 req/sec/base)
+        - Field names are CASE SENSITIVE and must match the table schema
+        - 429 responses trigger a 30s retry wait
+        """
         import csv as csv_mod
         import urllib.request
         import urllib.error
@@ -289,8 +296,12 @@ class PipelineAPI:
         token = airtable.get("token", "")
         base_id, table_id = self._parse_airtable_url(airtable.get("table_url", ""))
 
-        if not (token and base_id and table_id):
-            self._log("[WARN] Airtable not fully configured — skipping push")
+        if not token:
+            self._log("[WARN] No Airtable token configured — skipping push")
+            return
+        if not base_id or not table_id:
+            self._log("[ERROR] Could not parse base/table ID from Airtable URL. "
+                      "URL should look like: https://airtable.com/appXXX/tblYYY")
             return
 
         # Read the generated report CSV.
@@ -309,6 +320,7 @@ class PipelineAPI:
             return
 
         # Column names from the output (row index -> field name).
+        # These MUST match the Airtable table field names EXACTLY (case-sensitive).
         field_names = ["Row", "Truck#", "PO#", "By Whom", "Date Move",
                        "Machine#", "Hour Meter", "Machine Description",
                        "From", "To", "Order#"]
@@ -335,28 +347,63 @@ class PipelineAPI:
 
         self._log(f"[INFO] Pushing {len(records)} rows to Airtable...")
 
-        # Airtable API allows max 10 records per request.
-        url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
+        # Airtable API: max 10 records per request, 5 requests/sec/base.
+        api_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
         pushed = 0
-        for i in range(0, len(records), 10):
+        for batch_num, i in enumerate(range(0, len(records), 10)):
             batch = records[i:i+10]
             body = json.dumps({"records": batch}).encode()
-            req = urllib.request.Request(url, data=body, headers=headers)
+            req = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
+
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     pushed += len(batch)
+                    self._log(f"  Batch {batch_num+1}: {len(batch)} records sent")
             except urllib.error.HTTPError as e:
-                err_body = e.read().decode()[:200]
-                self._log(f"[ERROR] Airtable API error ({e.code}): {err_body}")
-                return
+                err_body = e.read().decode()[:300]
+                if e.code == 429:
+                    self._log("[WARN] Rate limited by Airtable — waiting 30s...")
+                    time.sleep(30)
+                    # Retry this batch.
+                    try:
+                        req2 = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
+                        with urllib.request.urlopen(req2, timeout=30) as resp2:
+                            pushed += len(batch)
+                    except Exception as e2:
+                        self._log(f"[ERROR] Retry failed: {e2}")
+                        return
+                elif e.code == 422:
+                    # Field name mismatch — parse the error for the user.
+                    self._log(f"[ERROR] Airtable rejected the data (422). This usually means "
+                              f"your Airtable table field names don't match exactly.")
+                    self._log(f"  Expected fields: {', '.join(selected)}")
+                    self._log(f"  Airtable says: {err_body}")
+                    self._log(f"  Fix: Make sure your Airtable table has columns with these "
+                              f"EXACT names (case-sensitive).")
+                    return
+                elif e.code == 401:
+                    self._log("[ERROR] Airtable token is invalid or expired. "
+                              "Create a new one at airtable.com/create/tokens")
+                    return
+                elif e.code == 403:
+                    self._log("[ERROR] Token doesn't have access to this base. "
+                              "Edit your token at airtable.com and add this base.")
+                    return
+                else:
+                    self._log(f"[ERROR] Airtable error ({e.code}): {err_body}")
+                    return
             except Exception as e:
                 self._log(f"[ERROR] Airtable push failed: {e}")
                 return
+
+            # Rate limit: wait 300ms between batches.
+            if i + 10 < len(records):
+                time.sleep(0.3)
 
         self._log(f"[OK] Pushed {pushed} rows to Airtable")
 
