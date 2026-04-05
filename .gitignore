@@ -10,3 +10,4 @@ temp_test_input/
 execution/browser_config.json
 __pycache__/
 *.pyc
+.bg-shell/
