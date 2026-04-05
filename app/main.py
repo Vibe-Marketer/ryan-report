@@ -352,15 +352,9 @@ class PipelineAPI:
                 if i < len(row) and col_name in selected and col_name in field_map:
                     airtable_field = field_map[col_name]
                     val = row[i].strip()
-                    if val:
-                        # Type coercion for Airtable field types.
-                        if airtable_field == "Hour Meter":
-                            try:
-                                val = float(val)
-                            except (ValueError, TypeError):
-                                continue  # Skip non-numeric meter values
-                        elif airtable_field == "Date Move":
-                            # Convert "1-Apr" or "26-Dec" to ISO date.
+                    if val and val.lower() not in ("n/a", "na", "none", "null"):
+                        # Date fields need ISO format for Airtable.
+                        if airtable_field == "Date Move":
                             try:
                                 from datetime import datetime
                                 dt = datetime.strptime(val, "%d-%b")
@@ -368,7 +362,7 @@ class PipelineAPI:
                                 val = dt.strftime("%Y-%m-%d")
                             except ValueError:
                                 pass  # Send as-is if parsing fails
-                        fields[airtable_field] = val
+                        fields[airtable_field] = str(val)
             if fields:
                 records.append({"fields": fields})
 
