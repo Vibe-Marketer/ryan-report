@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ryan Report</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e4e4e7;
+    --text-dim: #71717a;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --success: #22c55e;
+    --error: #ef4444;
+    --warning: #eab308;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  /* Header */
+  .header {
+    padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: flex-start;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  .header p { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  .tab-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: var(--text-dim); font-size: 13px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); border-color: var(--text-dim); }
+  .tab-btn.active { background: var(--surface); color: var(--text); border-color: var(--accent); }
+
+  /* Buttons */
+  .actions { padding: 16px 24px; display: flex; gap: 10px; }
+  .btn {
+    padding: 10px 20px; border: none; border-radius: var(--radius);
+    font-size: 14px; font-weight: 500; cursor: pointer;
+    transition: all 0.15s ease; display: flex; align-items: center; gap: 8px;
+  }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled { background: var(--border); color: var(--text-dim); cursor: not-allowed; }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-sm { padding: 6px 14px; font-size: 13px; }
+  .btn-lg { padding: 14px 32px; font-size: 16px; }
+
+  /* Spinner */
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+    border-radius: 50%; animation: spin 0.6s linear infinite; display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Pages */
+  .page { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .page.active { display: flex; }
+
+  /* Log area */
+  .log-area {
+    flex: 1; margin: 0 24px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    overflow-y: auto; padding: 14px 16px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12.5px; line-height: 1.6;
+  }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line.info { color: var(--text); }
+  .log-line.ok { color: var(--success); }
+  .log-line.error { color: var(--error); }
+  .log-line.warn { color: var(--warning); }
+  .log-line.dim { color: var(--text-dim); }
+  .log-empty {
+    color: var(--text-dim); font-style: italic;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+  }
+
+  /* Setup wizard */
+  .setup {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 40px 24px;
+    overflow-y: auto;
+  }
+  .setup-card {
+    width: 100%; max-width: 480px;
+  }
+  .setup-card h2 {
+    font-size: 22px; font-weight: 600; margin-bottom: 6px; text-align: center;
+  }
+  .setup-card .subtitle {
+    font-size: 14px; color: var(--text-dim); text-align: center; margin-bottom: 28px;
+  }
+  .step { display: none; }
+  .step.active { display: block; }
+  .step-indicator {
+    display: flex; justify-content: center; gap: 8px; margin-bottom: 24px;
+  }
+  .step-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--border); transition: background 0.2s;
+  }
+  .step-dot.active { background: var(--accent); }
+  .step-dot.done { background: var(--success); }
+
+  /* Form fields */
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 5px; }
+  .field input, .field select {
+    width: 100%; padding: 10px 14px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+    font-size: 14px; font-family: inherit; outline: none; transition: border-color 0.15s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field input[type="password"] { font-family: 'SF Mono', monospace; letter-spacing: 0.1em; }
+  .field select { appearance: none; cursor: pointer; }
+  .field .hint { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .field-row { display: flex; gap: 8px; align-items: flex-end; }
+  .field-row .field { flex: 1; }
+  .field-row .btn { margin-bottom: 16px; }
+
+  .step-actions {
+    display: flex; justify-content: space-between; margin-top: 24px; gap: 10px;
+  }
+  .step-actions .btn { flex: 1; justify-content: center; }
+
+  /* Settings form */
+  .settings { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .settings-section { margin-bottom: 24px; }
+  .settings-section h3 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 12px; color: var(--text);
+  }
+  .settings-actions {
+    padding: 16px 24px; border-top: 1px solid var(--border);
+    display: flex; gap: 10px; justify-content: flex-end;
+  }
+  .saved-msg {
+    color: var(--success); font-size: 13px; margin-right: auto;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .saved-msg.show { opacity: 1; }
+
+  /* Status bar */
+  .status-bar {
+    padding: 12px 24px; border-top: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .status-bar a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  .status-bar a:hover { text-decoration: underline; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 6px;
+  }
+  .status-dot.idle { background: var(--text-dim); }
+  .status-dot.running { background: var(--warning); animation: pulse 1s ease infinite; }
+  .status-dot.done { background: var(--success); }
+  .status-dot.error { background: var(--error); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Auto-detect badge */
+  .detected {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    background: rgba(34,197,94,0.15); color: var(--success);
+    font-size: 11px; margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Ryan Report</h1>
+    <p>Download Axon reports and generate the combined Ryan report</p>
+  </div>
+  <div class="header-right" id="nav-tabs" style="display:none;">
+    <button class="tab-btn active" id="tab-run" onclick="showPage('run')">Run</button>
+    <button class="tab-btn" id="tab-settings" onclick="showPage('settings')">Settings</button>
+  </div>
+</div>
+
+<!-- SETUP WIZARD (first run) -->
+<div class="page" id="page-setup">
+  <div class="setup">
+    <div class="setup-card">
+      <h2 id="setup-title">Welcome</h2>
+      <p class="subtitle" id="setup-subtitle">Let's get you set up in a few quick steps.</p>
+
+      <div class="step-indicator">
+        <div class="step-dot active" id="dot-0"></div>
+        <div class="step-dot" id="dot-1"></div>
+        <div class="step-dot" id="dot-2"></div>
+        <div class="step-dot" id="dot-3"></div>
+      </div>
+
+      <!-- Step 0: Browser -->
+      <div class="step active" id="step-0">
+        <div class="field">
+          <label>Which browser do you use for Axon?</label>
+          <select id="setup-browser" onchange="onBrowserSelect()">
+            <option value="">Detecting browsers...</option>
+          </select>
+          <div class="hint" id="browser-hint"></div>
+        </div>
+        <div class="field" id="profile-field" style="display:none;">
+          <label>Browser Profile</label>
+          <select id="setup-profile"></select>
+          <div class="hint">If unsure, leave as "Default" — it usually works.</div>
+        </div>
+        <div class="step-actions">
+          <div></div>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 1: Axon credentials -->
+      <div class="step" id="step-1">
+        <div class="field">
+          <label>Your company name in Axon</label>
+          <div style="display:flex; align-items:center; gap:0;">
+            <span style="padding:10px 0 10px 14px; background:var(--surface); border:1px solid var(--border); border-right:none; border-radius:8px 0 0 8px; color:var(--text-dim); font-size:14px; white-space:nowrap;">https://</span>
+            <input type="text" id="setup-subdomain" placeholder="yourcompany" style="border-radius:0; border-left:none; border-right:none; text-align:center; max-width:160px;">
+            <span style="padding:10px 14px 10px 0; background:var(--surface); border:1px solid var(--border); border-left:none; border-radius:0 8px 8px 0; color:var(--text-dim); font-size:14px; white-space:nowrap;">.axoneta.io</span>
+          </div>
+          <div class="hint">Just the part before ".axoneta.io" — for example, if your URL is catom.axoneta.io, type "catom"</div>
+          <input type="hidden" id="setup-url">
+        </div>
+        <div class="field">
+          <label>Axon Username</label>
+          <input type="text" id="setup-username" placeholder="Your username">
+        </div>
+        <div class="field">
+          <label>Axon Password</label>
+          <input type="password" id="setup-password" placeholder="Your password">
+        </div>
+        <div class="step-actions">
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Historical file -->
+      <div class="step" id="step-2">
+        <div class="field">
+          <label>Select your existing Ryan Moves spreadsheet</label>
+          <div class="field-row">
+            <div class="field" style="margin-bottom:0">
+              <input type="text" id="setup-historical" placeholder="Click Browse to find it" readonly>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="browseSetupFile('setup-historical')" style="margin-bottom:0">Browse</button>
+          </div>
+          <div class="hint">This is the "2026 RYAN MOVES.csv" file you've been maintaining. If you don't have one yet, skip this step.</div>
+        </div>
+        <div class="step-actions">
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 3: Confirm -->
+      <div class="step" id="step-3">
+        <div style="text-align:center; padding: 16px 0 8px;">
+          <div style="font-size: 40px; margin-bottom: 12px;">&#10003;</div>
+          <p style="font-size: 15px; margin-bottom: 20px;">Everything looks good. Your settings will be saved.</p>
+          <div id="setup-summary" style="text-align:left; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px 16px; font-size:13px; line-height:1.8;"></div>
+        </div>
+        <div class="step-actions">
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <button class="btn btn-primary btn-lg" onclick="finishSetup()">Save &amp; Start</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RUN PAGE -->
+<div class="page" id="page-run">
+  <div class="actions">
+    <button class="btn btn-primary" id="btn-all" onclick="runPipeline('all')">
+      <span class="spinner" id="spinner-all"></span>
+      Run All
+    </button>
+    <button class="btn btn-secondary" id="btn-download" onclick="runPipeline('download')">Download Only</button>
+    <button class="btn btn-secondary" id="btn-build" onclick="runPipeline('build')">Build Only</button>
+    <button class="btn btn-secondary" id="btn-folder" onclick="openOutput()">Open Folder</button>
+  </div>
+  <div class="log-area" id="log">
+    <div class="log-empty">Ready. Click "Run All" to download reports and build.</div>
+  </div>
+</div>
+
+<!-- SETTINGS PAGE -->
+<div class="page" id="page-settings">
+  <div class="settings">
+    <div class="settings-section">
+      <h3>Axon Login</h3>
+      <div class="field">
+        <label>Axon URL</label>
+        <input type="text" id="cfg-url" placeholder="https://yourcompany.axoneta.io/">
+      </div>
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="cfg-username">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="cfg-password">
+      </div>
+    </div>
+    <div class="settings-section">
+      <h3>Browser</h3>
+      <div class="field">
+        <label>Browser Path</label>
+        <input type="text" id="cfg-browser-path">
+      </div>
+      <div class="field">
+        <label>Profile Directory</label>
+        <input type="text" id="cfg-profile-dir">
+      </div>
+      <div class="field">
+        <label>User Data Directory</label>
+        <input type="text" id="cfg-user-data">
+      </div>
+    </div>
+    <div class="settings-section">
+      <h3>Files</h3>
+      <div class="field-row">
+        <div class="field">
+          <label>Download Folder</label>
+          <input type="text" id="cfg-download-dir">
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="browseFolder('cfg-download-dir')">Browse</button>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Historical Ryan CSV</label>
+          <input type="text" id="cfg-historical">
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="browseFile('cfg-historical')">Browse</button>
+      </div>
+    </div>
+  </div>
+  <div class="settings-actions">
+    <span class="saved-msg" id="saved-msg">Settings saved</span>
+    <button class="btn btn-secondary" onclick="loadSettings()">Reset</button>
+    <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+  </div>
+</div>
+
+<div class="status-bar">
+  <span>
+    <span class="status-dot idle" id="status-dot"></span>
+    <span id="status-text">Idle</span>
+  </span>
+  <a onclick="openOutput()">Open output folder</a>
+</div>
+
+<script>
+  const logEl = document.getElementById('log');
+  const dot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+  let pollTimer = null;
+  let started = false;
+  let currentStep = 0;
+  let detectedBrowsers = [];
+
+  // ============================================================
+  // INIT — check if configured, show setup or run page
+  // ============================================================
+  async function init() {
+    const configured = await window.pywebview.api.is_configured();
+    if (configured) {
+      document.getElementById('nav-tabs').style.display = 'flex';
+      showPage('run');
+    } else {
+      showPage('setup');
+      await loadBrowsers();
+    }
+  }
+
+  // ============================================================
+  // SETUP WIZARD
+  // ============================================================
+  async function loadBrowsers() {
+    detectedBrowsers = await window.pywebview.api.detect_browsers();
+    const sel = document.getElementById('setup-browser');
+    sel.innerHTML = '';
+    if (detectedBrowsers.length === 0) {
+      sel.innerHTML = '<option value="">No browsers found — enter path manually</option>';
+      document.getElementById('browser-hint').textContent = 'No Chromium browsers detected.';
+    } else {
+      for (const b of detectedBrowsers) {
+        const opt = document.createElement('option');
+        opt.value = b.path;
+        opt.textContent = b.name;
+        sel.appendChild(opt);
+      }
+      document.getElementById('browser-hint').innerHTML =
+        detectedBrowsers.length + ' browser(s) found <span class="detected">auto-detected</span>';
+      onBrowserSelect();
+    }
+  }
+
+  async function onBrowserSelect() {
+    const sel = document.getElementById('setup-browser');
+    const browser = detectedBrowsers.find(b => b.path === sel.value);
+    if (!browser) return;
+
+    const profiles = await window.pywebview.api.detect_profiles(browser.user_data_dir);
+    const profSel = document.getElementById('setup-profile');
+    profSel.innerHTML = '';
+    for (const p of profiles) {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p === 'Default' ? 'Default (most common)' : p;
+      profSel.appendChild(opt);
+    }
+    document.getElementById('profile-field').style.display = profiles.length > 1 ? 'block' : 'none';
+  }
+
+  function updateStepDots() {
+    for (let i = 0; i < 4; i++) {
+      const d = document.getElementById('dot-' + i);
+      d.className = 'step-dot' + (i === currentStep ? ' active' : (i < currentStep ? ' done' : ''));
+    }
+  }
+
+  function showStep(n) {
+    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+    document.getElementById('step-' + n).classList.add('active');
+    currentStep = n;
+    updateStepDots();
+
+    const titles = ['Select Your Browser', 'Axon Login', 'Your Ryan Spreadsheet', 'Ready to Go'];
+    const subtitles = [
+      'We\'ll use this to download reports from Axon.',
+      'Enter your Axon TMS credentials.',
+      'Point us to your existing Ryan Moves file (optional).',
+      'Review your settings and start using the app.'
+    ];
+    document.getElementById('setup-title').textContent = titles[n];
+    document.getElementById('setup-subtitle').textContent = subtitles[n];
+
+    if (n === 3) buildSummary();
+  }
+
+  function nextStep() {
+    // When leaving step 1, build the full URL from subdomain
+    if (currentStep === 1) {
+      const sub = document.getElementById('setup-subdomain').value.trim().toLowerCase();
+      document.getElementById('setup-url').value = sub ? 'https://' + sub + '.axoneta.io/' : '';
+    }
+    if (currentStep < 3) showStep(currentStep + 1);
+  }
+  function prevStep() { if (currentStep > 0) showStep(currentStep - 1); }
+
+  function buildSummary() {
+    const browser = detectedBrowsers.find(b => b.path === document.getElementById('setup-browser').value);
+    const sub = document.getElementById('setup-subdomain').value.trim();
+    const url = sub ? 'https://' + sub + '.axoneta.io/' : '(not set)';
+    const user = document.getElementById('setup-username').value || '(not set)';
+    const hist = document.getElementById('setup-historical').value || '(none — will start fresh)';
+    const bname = browser ? browser.name : '(not set)';
+
+    document.getElementById('setup-summary').innerHTML = `
+      <div><strong>Browser:</strong> ${bname}</div>
+      <div><strong>Axon URL:</strong> ${url}</div>
+      <div><strong>Username:</strong> ${user}</div>
+      <div><strong>Password:</strong> ${'*'.repeat(document.getElementById('setup-password').value.length || 0) || '(not set)'}</div>
+      <div><strong>Ryan Moves file:</strong> ${hist}</div>
+    `;
+  }
+
+  async function browseSetupFile(inputId) {
+    const path = await window.pywebview.api.pick_file();
+    if (path) document.getElementById(inputId).value = path;
+  }
+
+  async function finishSetup() {
+    const browser = detectedBrowsers.find(b => b.path === document.getElementById('setup-browser').value);
+    const profile = document.getElementById('setup-profile').value || 'Default';
+    const dlDir = await window.pywebview.api.get_default_download_dir();
+
+    const cfg = {
+      browser: {
+        engine: 'chromium',
+        headless: false,
+        executable_path: browser ? browser.path : '',
+        user_data_dir: browser ? browser.user_data_dir : '',
+        profile_directory: profile
+      },
+      auth: {
+        base_url: document.getElementById('setup-url').value,
+        username: document.getElementById('setup-username').value,
+        password: document.getElementById('setup-password').value,
+        manual_login_timeout_seconds: 180
+      },
+      downloads: { directory: dlDir },
+      historical_ryan: document.getElementById('setup-historical').value,
+      reports: [
+        {
+          enabled: true, name: "new_ryan",
+          steps: [
+            { action: "click_tab", name: "Contents", wait_ms: 1000 },
+            { action: "click_tab", name: "Trucking", wait_ms: 2000 },
+            { action: "click_menu", text: "Reporter Reports", wait_ms: 3000 },
+            { action: "click_menu", text: "New RYAN", wait_ms: 3000 },
+            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 60000 }
+          ]
+        },
+        {
+          enabled: true, name: "order_master",
+          steps: [
+            { action: "click_tab", name: "Contents", wait_ms: 1000 },
+            { action: "click_tab", name: "Trucking", wait_ms: 2000 },
+            { action: "click_menu", text: "Order Master Report", wait_ms: 3000 },
+            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 60000 }
+          ]
+        },
+        {
+          enabled: true, name: "audit_info",
+          steps: [
+            { action: "click_tab", name: "Contents", wait_ms: 1000 },
+            { action: "click_tab", name: "Trucking", wait_ms: 2000 },
+            { action: "click_menu", text: "Reporter Reports", wait_ms: 3000 },
+            { action: "click_menu", text: "audit info", wait_ms: 3000 },
+            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 60000 }
+          ]
+        }
+      ]
+    };
+
+    await window.pywebview.api.save_config(cfg);
+    document.getElementById('nav-tabs').style.display = 'flex';
+    showPage('run');
+  }
+
+  // ============================================================
+  // PAGE SWITCHING
+  // ============================================================
+  function showPage(name) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    const tab = document.getElementById('tab-' + name);
+    if (tab) tab.classList.add('active');
+    if (name === 'settings') loadSettings();
+  }
+
+  // ============================================================
+  // SETTINGS (advanced)
+  // ============================================================
+  async function loadSettings() {
+    const cfg = await window.pywebview.api.load_config();
+    document.getElementById('cfg-url').value = cfg?.auth?.base_url || '';
+    document.getElementById('cfg-username').value = cfg?.auth?.username || '';
+    document.getElementById('cfg-password').value = cfg?.auth?.password || '';
+    document.getElementById('cfg-browser-path').value = cfg?.browser?.executable_path || '';
+    document.getElementById('cfg-profile-dir').value = cfg?.browser?.profile_directory || 'Default';
+    document.getElementById('cfg-user-data').value = cfg?.browser?.user_data_dir || '';
+    document.getElementById('cfg-download-dir').value = cfg?.downloads?.directory || '';
+    document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
+  }
+
+  async function saveSettings() {
+    const cfg = await window.pywebview.api.load_config();
+    cfg.auth = cfg.auth || {};
+    cfg.auth.base_url = document.getElementById('cfg-url').value;
+    cfg.auth.username = document.getElementById('cfg-username').value;
+    cfg.auth.password = document.getElementById('cfg-password').value;
+    cfg.auth.manual_login_timeout_seconds = cfg.auth.manual_login_timeout_seconds || 180;
+    cfg.browser = cfg.browser || {};
+    cfg.browser.executable_path = document.getElementById('cfg-browser-path').value;
+    cfg.browser.profile_directory = document.getElementById('cfg-profile-dir').value || 'Default';
+    cfg.browser.user_data_dir = document.getElementById('cfg-user-data').value;
+    cfg.browser.engine = 'chromium'; cfg.browser.headless = false;
+    cfg.downloads = cfg.downloads || {};
+    cfg.downloads.directory = document.getElementById('cfg-download-dir').value;
+    cfg.historical_ryan = document.getElementById('cfg-historical').value;
+    await window.pywebview.api.save_config(cfg);
+    const msg = document.getElementById('saved-msg');
+    msg.classList.add('show');
+    setTimeout(() => msg.classList.remove('show'), 2000);
+  }
+
+  async function browseFolder(inputId) {
+    const path = await window.pywebview.api.pick_folder();
+    if (path) document.getElementById(inputId).value = path;
+  }
+  async function browseFile(inputId) {
+    const path = await window.pywebview.api.pick_file();
+    if (path) document.getElementById(inputId).value = path;
+  }
+
+  // ============================================================
+  // PIPELINE
+  // ============================================================
+  function setStatus(state, text) {
+    dot.className = 'status-dot ' + state;
+    statusText.textContent = text;
+  }
+  function setButtons(disabled) {
+    document.getElementById('btn-all').disabled = disabled;
+    document.getElementById('btn-download').disabled = disabled;
+    document.getElementById('btn-build').disabled = disabled;
+    document.getElementById('spinner-all').style.display = disabled ? 'inline-block' : 'none';
+  }
+  function appendLog(line) {
+    if (!started) { logEl.innerHTML = ''; started = true; }
+    const div = document.createElement('div');
+    div.className = 'log-line ' + classifyLine(line);
+    div.textContent = line;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function classifyLine(line) {
+    if (line.startsWith('[OK]') || line.startsWith('[DONE]')) return 'ok';
+    if (line.startsWith('[ERROR]')) return 'error';
+    if (line.startsWith('[WARN]')) return 'warn';
+    if (line.startsWith('[INFO]')) return 'info';
+    if (line.startsWith('  ')) return 'dim';
+    return 'info';
+  }
+
+  async function runPipeline(mode) {
+    showPage('run');
+    setButtons(true);
+    setStatus('running', 'Running...');
+    started = false;
+    logEl.innerHTML = '<div class="log-empty">Starting pipeline...</div>';
+    const result = await window.pywebview.api.run_pipeline(mode);
+    if (result === 'already running') { appendLog('[WARN] Pipeline is already running'); return; }
+    pollTimer = setInterval(async () => {
+      const lines = await window.pywebview.api.get_logs();
+      for (const line of lines) appendLog(line);
+      const running = await window.pywebview.api.is_running();
+      if (!running) {
+        clearInterval(pollTimer);
+        setButtons(false);
+        const allText = logEl.innerText || '';
+        if (allText.includes('[DONE]')) setStatus('done', 'Complete');
+        else if (allText.includes('[ERROR]')) setStatus('error', 'Failed');
+        else setStatus('idle', 'Idle');
+      }
+    }, 500);
+  }
+
+  async function openOutput() {
+    const cfg = await window.pywebview.api.load_config();
+    const dir = cfg?.downloads?.directory;
+    if (dir) await window.pywebview.api.open_folder(dir);
+  }
+
+  // Boot
+  window.addEventListener('pywebviewready', init);
+</script>
+</body>
+</html>
