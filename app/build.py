@@ -64,6 +64,11 @@ def build(debug: bool = False) -> None:
     else:
         print("  [WARN] Playwright driver not found — download feature won't work")
 
+    # App icon.
+    icon_path = APP_DIR / ("icon.icns" if platform.system() == "Darwin" else "icon.png")
+    if icon_path.exists():
+        cmd.extend(["--icon", str(icon_path)])
+
     if not debug:
         if platform.system() == "Darwin":
             cmd.append("--windowed")  # .app bundle on macOS
