@@ -360,6 +360,37 @@
       </div>
     </div>
     <div class="settings-section">
+      <h3>Automatic Schedule</h3>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="cfg-schedule-enabled" style="width:auto; margin-right:8px;">
+          Run automatically on a schedule
+        </label>
+        <div class="hint">The report will run in the background even if the app is closed. Best when no one is using the computer.</div>
+      </div>
+      <div id="schedule-options" style="display:none;">
+        <div class="field-row">
+          <div class="field">
+            <label>Day</label>
+            <select id="cfg-schedule-day">
+              <option value="daily">Every day</option>
+              <option value="monday">Monday</option>
+              <option value="tuesday">Tuesday</option>
+              <option value="wednesday">Wednesday</option>
+              <option value="thursday">Thursday</option>
+              <option value="friday">Friday</option>
+              <option value="saturday" selected>Saturday</option>
+              <option value="sunday">Sunday</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Time</label>
+            <input type="time" id="cfg-schedule-time" value="03:00" style="font-family:inherit;">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="settings-section">
       <h3>AI Troubleshooting (Optional)</h3>
       <div class="field">
         <label>Anthropic API Key</label>
@@ -589,7 +620,22 @@
     document.getElementById('cfg-download-dir').value = cfg?.downloads?.directory || '';
     document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
     document.getElementById('cfg-api-key').value = cfg?.anthropic_api_key || '';
+
+    // Schedule
+    const sched = cfg?.schedule || {};
+    const enabled = !!sched.enabled;
+    document.getElementById('cfg-schedule-enabled').checked = enabled;
+    document.getElementById('schedule-options').style.display = enabled ? 'block' : 'none';
+    document.getElementById('cfg-schedule-day').value = sched.day || 'saturday';
+    const h = String(sched.hour ?? 3).padStart(2, '0');
+    const m = String(sched.minute ?? 0).padStart(2, '0');
+    document.getElementById('cfg-schedule-time').value = `${h}:${m}`;
   }
+
+  // Toggle schedule options visibility
+  document.getElementById('cfg-schedule-enabled').addEventListener('change', function() {
+    document.getElementById('schedule-options').style.display = this.checked ? 'block' : 'none';
+  });
 
   async function saveSettings() {
     const cfg = await window.pywebview.api.load_config();
@@ -608,9 +654,19 @@
     cfg.historical_ryan = document.getElementById('cfg-historical').value;
     cfg.anthropic_api_key = document.getElementById('cfg-api-key').value;
     await window.pywebview.api.save_config(cfg);
+
+    // Save schedule
+    const schedEnabled = document.getElementById('cfg-schedule-enabled').checked;
+    const schedDay = document.getElementById('cfg-schedule-day').value;
+    const schedTime = document.getElementById('cfg-schedule-time').value.split(':');
+    const schedHour = parseInt(schedTime[0] || '3');
+    const schedMin = parseInt(schedTime[1] || '0');
+    const schedResult = await window.pywebview.api.set_schedule(schedEnabled, schedDay, schedHour, schedMin);
+
     const msg = document.getElementById('saved-msg');
+    msg.textContent = schedEnabled ? 'Settings saved — ' + schedResult : 'Settings saved';
     msg.classList.add('show');
-    setTimeout(() => msg.classList.remove('show'), 2000);
+    setTimeout(() => msg.classList.remove('show'), 3000);
   }
 
   async function browseFolder(inputId) {

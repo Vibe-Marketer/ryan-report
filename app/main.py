@@ -294,6 +294,124 @@ class PipelineAPI:
         else:
             subprocess.Popen(["xdg-open", path])
 
+    # -- Scheduling --
+
+    def _plist_path(self) -> Path:
+        return Path.home() / "Library/LaunchAgents/com.andrewnaegele.catom.plist"
+
+    def _task_name(self) -> str:
+        return "CatomReportSchedule"
+
+    def get_schedule(self) -> dict[str, Any]:
+        """Return the current schedule config, or empty if none."""
+        cfg = self.load_config()
+        return cfg.get("schedule", {})
+
+    def set_schedule(self, enabled: bool, day: str, hour: int, minute: int) -> str:
+        """Set or remove the scheduled run. day: 'daily' or 'monday'-'sunday'."""
+        import subprocess
+
+        cfg = self.load_config()
+        cfg["schedule"] = {
+            "enabled": enabled,
+            "day": day,
+            "hour": hour,
+            "minute": minute,
+        }
+        self.save_config(cfg)
+
+        if not enabled:
+            self._remove_schedule()
+            return "Schedule removed"
+
+        if sys.platform == "darwin":
+            return self._set_launchd_schedule(day, hour, minute)
+        elif sys.platform == "win32":
+            return self._set_windows_schedule(day, hour, minute)
+        return "Scheduling not supported on this platform"
+
+    def _set_launchd_schedule(self, day: str, hour: int, minute: int) -> str:
+        import plistlib
+        import subprocess
+
+        python = sys.executable
+        config = self.get_config_path()
+        script = str(EXECUTION / "run_pipeline.py")
+
+        # Build the calendar interval.
+        cal: dict[str, int] = {"Hour": hour, "Minute": minute}
+        day_map = {
+            "sunday": 0, "monday": 1, "tuesday": 2, "wednesday": 3,
+            "thursday": 4, "friday": 5, "saturday": 6,
+        }
+        if day.lower() in day_map:
+            cal["Weekday"] = day_map[day.lower()]
+
+        plist = {
+            "Label": "com.andrewnaegele.catom",
+            "ProgramArguments": [python, script, "--config", config],
+            "StartCalendarInterval": cal,
+            "WorkingDirectory": str(APP_ROOT),
+            "StandardOutPath": str(Path.home() / "Library/Logs/catom-report.log"),
+            "StandardErrorPath": str(Path.home() / "Library/Logs/catom-report.log"),
+            "RunAtLoad": False,
+        }
+
+        plist_path = self._plist_path()
+        # Unload existing if present.
+        subprocess.run(["launchctl", "unload", str(plist_path)],
+                       capture_output=True, check=False)
+
+        with plist_path.open("wb") as f:
+            plistlib.dump(plist, f)
+
+        subprocess.run(["launchctl", "load", str(plist_path)], check=True)
+        return f"Scheduled: {day} at {hour:02d}:{minute:02d}"
+
+    def _set_windows_schedule(self, day: str, hour: int, minute: int) -> str:
+        import subprocess
+
+        python = sys.executable
+        config = self.get_config_path()
+        script = str(EXECUTION / "run_pipeline.py")
+        task = self._task_name()
+        time_str = f"{hour:02d}:{minute:02d}"
+
+        # Delete existing task if present.
+        subprocess.run(["schtasks", "/delete", "/tn", task, "/f"],
+                       capture_output=True, check=False)
+
+        if day.lower() == "daily":
+            schedule_type, day_arg = "/sc", "daily"
+        else:
+            schedule_type = "/sc"
+            day_arg = "weekly"
+
+        cmd = [
+            "schtasks", "/create", "/tn", task,
+            "/tr", f'"{python}" "{script}" "--config" "{config}"',
+            "/sc", day_arg,
+            "/st", time_str,
+        ]
+        if day.lower() != "daily":
+            cmd.extend(["/d", day[:3].upper()])
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return f"Failed to create schedule: {result.stderr}"
+        return f"Scheduled: {day} at {time_str}"
+
+    def _remove_schedule(self) -> None:
+        import subprocess
+        if sys.platform == "darwin":
+            plist_path = self._plist_path()
+            subprocess.run(["launchctl", "unload", str(plist_path)],
+                           capture_output=True, check=False)
+            plist_path.unlink(missing_ok=True)
+        elif sys.platform == "win32":
+            subprocess.run(["schtasks", "/delete", "/tn", self._task_name(), "/f"],
+                           capture_output=True, check=False)
+
     # -- AI Troubleshooting --
 
     def troubleshoot(self, error_log: str) -> str:
