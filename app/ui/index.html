@@ -302,6 +302,7 @@
     <button class="btn btn-secondary" id="btn-download" onclick="runPipeline('download')">Download Only</button>
     <button class="btn btn-secondary" id="btn-build" onclick="runPipeline('build')">Build Only</button>
     <button class="btn btn-secondary" id="btn-folder" onclick="openOutput()">Open Folder</button>
+    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()" style="margin-left:auto;">Get Help</button>
   </div>
   <div class="log-area" id="log">
     <div class="log-empty">Ready. Click "Run All" to download reports and build.</div>
@@ -356,6 +357,14 @@
           <input type="text" id="cfg-historical">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="browseFile('cfg-historical')">Browse</button>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h3>AI Troubleshooting (Optional)</h3>
+      <div class="field">
+        <label>Anthropic API Key</label>
+        <input type="password" id="cfg-api-key" placeholder="sk-ant-...">
+        <div class="hint">Enables the "Get Help" button — Claude will diagnose errors for you. Get a key at console.anthropic.com</div>
       </div>
     </div>
   </div>
@@ -579,6 +588,7 @@
     document.getElementById('cfg-user-data').value = cfg?.browser?.user_data_dir || '';
     document.getElementById('cfg-download-dir').value = cfg?.downloads?.directory || '';
     document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
+    document.getElementById('cfg-api-key').value = cfg?.anthropic_api_key || '';
   }
 
   async function saveSettings() {
@@ -596,6 +606,7 @@
     cfg.downloads = cfg.downloads || {};
     cfg.downloads.directory = document.getElementById('cfg-download-dir').value;
     cfg.historical_ryan = document.getElementById('cfg-historical').value;
+    cfg.anthropic_api_key = document.getElementById('cfg-api-key').value;
     await window.pywebview.api.save_config(cfg);
     const msg = document.getElementById('saved-msg');
     msg.classList.add('show');
@@ -637,6 +648,7 @@
     if (line.startsWith('[ERROR]')) return 'error';
     if (line.startsWith('[WARN]')) return 'warn';
     if (line.startsWith('[INFO]')) return 'info';
+    if (line.startsWith('[HELP]')) return 'ok';
     if (line.startsWith('  ')) return 'dim';
     return 'info';
   }
@@ -662,6 +674,16 @@
         else setStatus('idle', 'Idle');
       }
     }, 500);
+  }
+
+  async function getHelp() {
+    const errorLog = logEl.innerText || 'No logs yet.';
+    appendLog('[INFO] Asking Claude for help...');
+    const advice = await window.pywebview.api.troubleshoot(errorLog);
+    appendLog('');
+    for (const line of advice.split('\n')) {
+      appendLog('[HELP] ' + line);
+    }
   }
 
   async function openOutput() {

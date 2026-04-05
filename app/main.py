@@ -294,6 +294,64 @@ class PipelineAPI:
         else:
             subprocess.Popen(["xdg-open", path])
 
+    # -- AI Troubleshooting --
+
+    def troubleshoot(self, error_log: str) -> str:
+        """Send error logs to Claude API for troubleshooting advice."""
+        try:
+            import urllib.request
+            import urllib.error
+
+            # Look for API key in config or environment.
+            cfg = self.load_config()
+            api_key = cfg.get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                return (
+                    "No API key configured. To enable AI troubleshooting:\n\n"
+                    "1. Go to Settings\n"
+                    "2. Add your Anthropic API key\n"
+                    "3. Try again\n\n"
+                    "Common fixes:\n"
+                    "- 'Profile lock' error: Close your browser, reopen it, try again\n"
+                    "- 'element not found' error: The Axon page layout may have changed — contact support\n"
+                    "- 'Download failed' error: Make sure you're logged into Axon in your browser\n"
+                    "- 'FileNotFoundError': Check that your Ryan Moves CSV path is correct in Settings"
+                )
+
+            prompt = (
+                "You are a troubleshooting assistant for the Ryan Report app. "
+                "This app downloads reports from Axon TMS (a trucking management system) "
+                "via browser automation (Playwright CDP) and builds a combined CSV report. "
+                "The user got an error. Diagnose the problem and give a clear, "
+                "non-technical fix in 2-3 sentences. Here's the error log:\n\n"
+                f"{error_log[-2000:]}"
+            )
+
+            body = json.dumps({
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}],
+            }).encode()
+
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read())
+                return result["content"][0]["text"]
+
+        except urllib.error.HTTPError as e:
+            return f"API error ({e.code}): Check that your API key is valid."
+        except Exception as e:
+            return f"Could not reach Claude: {e}\n\nCheck your internet connection and try again."
+
 
 # ---------------------------------------------------------------------------
 # App entry point.
