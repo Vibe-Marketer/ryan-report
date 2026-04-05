@@ -251,12 +251,164 @@ class PipelineAPI:
                         size_kb = f.stat().st_size / 1024
                         self._log(f"  {f.name} ({size_kb:.0f} KB)")
 
+            # Push to Airtable if configured.
+            airtable = cfg.get("airtable", {})
+            if airtable.get("enabled") and airtable.get("token") and airtable.get("table_url"):
+                self._push_to_airtable(cfg)
+
         except subprocess.TimeoutExpired:
             self._log("[ERROR] Pipeline timed out after 5 minutes")
         except Exception as e:
             self._log(f"[ERROR] {e}")
         finally:
             self._running = False
+
+    # -- Airtable --
+
+    def _parse_airtable_url(self, url: str) -> tuple[str, str]:
+        """Extract base ID and table name/ID from an Airtable URL.
+        Handles: https://airtable.com/appXXXXX/tblYYYYY/...
+        """
+        import re
+        m = re.search(r"airtable\.com/(app\w+)/(tbl\w+)", url)
+        if m:
+            return m.group(1), m.group(2)
+        # Try simpler format: just base/table IDs pasted directly.
+        parts = url.strip().strip("/").split("/")
+        base = next((p for p in parts if p.startswith("app")), "")
+        table = next((p for p in parts if p.startswith("tbl")), "")
+        return base, table
+
+    def _push_to_airtable(self, cfg: dict) -> None:
+        """Push the latest generated report rows to Airtable."""
+        import csv as csv_mod
+        import urllib.request
+        import urllib.error
+
+        airtable = cfg.get("airtable", {})
+        token = airtable.get("token", "")
+        base_id, table_id = self._parse_airtable_url(airtable.get("table_url", ""))
+
+        if not (token and base_id and table_id):
+            self._log("[WARN] Airtable not fully configured — skipping push")
+            return
+
+        # Read the generated report CSV.
+        dl_dir = Path(cfg.get("downloads", {}).get("directory", ""))
+        report_csv = dl_dir / "generated-ryan-report-latest-new-only.csv"
+        if not report_csv.exists():
+            self._log("[WARN] No generated report found — skipping Airtable push")
+            return
+
+        # Parse CSV — skip the two header rows, read data rows.
+        with report_csv.open("r", encoding="utf-8-sig") as f:
+            lines = list(csv_mod.reader(f))
+
+        if len(lines) < 3:
+            self._log("[INFO] No data rows to push to Airtable")
+            return
+
+        # Column names from the output (row index -> field name).
+        field_names = ["Row", "Truck#", "PO#", "By Whom", "Date Move",
+                       "Machine#", "Hour Meter", "Machine Description",
+                       "From", "To", "Order#"]
+
+        # Which columns to push (configurable, defaults to all).
+        selected = airtable.get("columns", field_names)
+
+        records = []
+        for row in lines[2:]:  # Skip 2 header rows.
+            if not row or not any(row):
+                continue
+            fields = {}
+            for i, name in enumerate(field_names):
+                if i < len(row) and name in selected:
+                    val = row[i].strip()
+                    if val:
+                        fields[name] = val
+            if fields:
+                records.append({"fields": fields})
+
+        if not records:
+            self._log("[INFO] No records to push to Airtable")
+            return
+
+        self._log(f"[INFO] Pushing {len(records)} rows to Airtable...")
+
+        # Airtable API allows max 10 records per request.
+        url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+        pushed = 0
+        for i in range(0, len(records), 10):
+            batch = records[i:i+10]
+            body = json.dumps({"records": batch}).encode()
+            req = urllib.request.Request(url, data=body, headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    pushed += len(batch)
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode()[:200]
+                self._log(f"[ERROR] Airtable API error ({e.code}): {err_body}")
+                return
+            except Exception as e:
+                self._log(f"[ERROR] Airtable push failed: {e}")
+                return
+
+        self._log(f"[OK] Pushed {pushed} rows to Airtable")
+
+    # -- Report Management --
+
+    def get_reports(self) -> list[dict]:
+        """Return list of configured reports with name and enabled status."""
+        cfg = self.load_config()
+        reports = cfg.get("reports", [])
+        return [{"name": r.get("name", ""), "enabled": r.get("enabled", True)} for r in reports]
+
+    def toggle_report(self, name: str, enabled: bool) -> str:
+        """Enable or disable a report by name."""
+        cfg = self.load_config()
+        for r in cfg.get("reports", []):
+            if r.get("name") == name:
+                r["enabled"] = enabled
+                self.save_config(cfg)
+                return "ok"
+        return "not found"
+
+    def add_report(self, name: str, menu_path: str) -> str:
+        """Add a new report. menu_path is like 'Trucking > Reporter Reports > My Report'."""
+        cfg = self.load_config()
+        parts = [p.strip() for p in menu_path.split(">")]
+        if len(parts) < 2:
+            return "Need at least 2 menu items (e.g. 'Trucking > Report Name')"
+
+        steps = [{"action": "click_tab", "name": "Contents", "wait_ms": 1000}]
+        # First part is always a tab.
+        steps.append({"action": "click_tab", "name": parts[0], "wait_ms": 2000})
+        # Middle parts are menu clicks.
+        for part in parts[1:-1]:
+            steps.append({"action": "click_menu", "text": part, "wait_ms": 3000})
+        # Last part is the report itself (also a menu click), then Export.
+        steps.append({"action": "click_menu", "text": parts[-1], "wait_ms": 3000})
+        steps.append({
+            "action": "click_button", "text": "Export",
+            "wait_ms": 1000, "triggers_download": True, "timeout_ms": 60000,
+        })
+
+        report = {"enabled": True, "name": name, "steps": steps}
+        cfg.setdefault("reports", []).append(report)
+        self.save_config(cfg)
+        return "ok"
+
+    def remove_report(self, name: str) -> str:
+        """Remove a report by name."""
+        cfg = self.load_config()
+        cfg["reports"] = [r for r in cfg.get("reports", []) if r.get("name") != name]
+        self.save_config(cfg)
+        return "ok"
 
     # -- Output info --
 

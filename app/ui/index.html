@@ -391,6 +391,51 @@
       </div>
     </div>
     <div class="settings-section">
+      <h3>Reports</h3>
+      <div id="reports-list" style="margin-bottom:12px;"></div>
+      <div class="field-row" style="align-items:flex-end;">
+        <div class="field" style="flex:1;">
+          <label>Add Report</label>
+          <input type="text" id="new-report-name" placeholder="Report name (e.g. my_report)">
+        </div>
+        <div class="field" style="flex:2;">
+          <label>Menu Path</label>
+          <input type="text" id="new-report-path" placeholder="Trucking > Reporter Reports > Report Name">
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="addReport()" style="margin-bottom:16px;">Add</button>
+      </div>
+      <div class="hint" style="margin-top:-8px;">Use " > " to separate menu levels. The last item is clicked, then Export runs automatically.</div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Output Columns</h3>
+      <div class="hint" style="margin-bottom:10px;">Choose which columns appear in the generated report and get pushed to Airtable.</div>
+      <div id="output-columns" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;"></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Airtable (Optional)</h3>
+      <div class="field">
+        <label>
+          <input type="checkbox" id="cfg-airtable-enabled" style="width:auto; margin-right:8px;">
+          Push results to Airtable after each run
+        </label>
+      </div>
+      <div id="airtable-options" style="display:none;">
+        <div class="field">
+          <label>Airtable Personal Access Token</label>
+          <input type="password" id="cfg-airtable-token" placeholder="pat...">
+          <div class="hint">Create one at airtable.com/create/tokens — needs data read/write scope</div>
+        </div>
+        <div class="field">
+          <label>Airtable Table URL</label>
+          <input type="text" id="cfg-airtable-url" placeholder="https://airtable.com/appXXXXX/tblYYYYY">
+          <div class="hint">Open your table in Airtable and paste the URL from the address bar</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>AI Troubleshooting (Optional)</h3>
       <div class="field">
         <label>Anthropic API Key</label>
@@ -621,6 +666,19 @@
     document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
     document.getElementById('cfg-api-key').value = cfg?.anthropic_api_key || '';
 
+    // Airtable
+    const at = cfg?.airtable || {};
+    document.getElementById('cfg-airtable-enabled').checked = !!at.enabled;
+    document.getElementById('airtable-options').style.display = at.enabled ? 'block' : 'none';
+    document.getElementById('cfg-airtable-token').value = at.token || '';
+    document.getElementById('cfg-airtable-url').value = at.table_url || '';
+
+    // Reports list
+    await loadReports();
+
+    // Output columns
+    loadOutputColumns(cfg);
+
     // Schedule
     const sched = cfg?.schedule || {};
     const enabled = !!sched.enabled;
@@ -632,10 +690,73 @@
     document.getElementById('cfg-schedule-time').value = `${h}:${m}`;
   }
 
-  // Toggle schedule options visibility
+  // Toggle visibility
   document.getElementById('cfg-schedule-enabled').addEventListener('change', function() {
     document.getElementById('schedule-options').style.display = this.checked ? 'block' : 'none';
   });
+  document.getElementById('cfg-airtable-enabled').addEventListener('change', function() {
+    document.getElementById('airtable-options').style.display = this.checked ? 'block' : 'none';
+  });
+
+  // All available output columns
+  const ALL_COLUMNS = ['Row', 'Truck#', 'PO#', 'By Whom', 'Date Move',
+    'Machine#', 'Hour Meter', 'Machine Description', 'From', 'To', 'Order#'];
+
+  function loadOutputColumns(cfg) {
+    const selected = cfg?.airtable?.columns || ALL_COLUMNS;
+    const container = document.getElementById('output-columns');
+    container.innerHTML = '';
+    for (const col of ALL_COLUMNS) {
+      const checked = selected.includes(col) ? 'checked' : '';
+      container.innerHTML += `<label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" class="col-check" value="${col}" ${checked} style="width:auto;"> ${col}
+      </label>`;
+    }
+  }
+
+  function getSelectedColumns() {
+    return [...document.querySelectorAll('.col-check:checked')].map(c => c.value);
+  }
+
+  // Reports
+  async function loadReports() {
+    const reports = await window.pywebview.api.get_reports();
+    const container = document.getElementById('reports-list');
+    if (reports.length === 0) {
+      container.innerHTML = '<div class="hint">No reports configured.</div>';
+      return;
+    }
+    container.innerHTML = reports.map(r => `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">
+        <label style="font-size:13px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleReport('${r.name}', this.checked)" style="width:auto;">
+          ${r.name}
+        </label>
+        <button class="btn btn-secondary btn-sm" onclick="removeReport('${r.name}')" style="padding:3px 10px; font-size:11px;">Remove</button>
+      </div>
+    `).join('');
+  }
+
+  async function toggleReport(name, enabled) {
+    await window.pywebview.api.toggle_report(name, enabled);
+  }
+
+  async function removeReport(name) {
+    await window.pywebview.api.remove_report(name);
+    await loadReports();
+  }
+
+  async function addReport() {
+    const name = document.getElementById('new-report-name').value.trim();
+    const path = document.getElementById('new-report-path').value.trim();
+    if (!name || !path) return;
+    const result = await window.pywebview.api.add_report(name, path);
+    if (result === 'ok') {
+      document.getElementById('new-report-name').value = '';
+      document.getElementById('new-report-path').value = '';
+      await loadReports();
+    }
+  }
 
   async function saveSettings() {
     const cfg = await window.pywebview.api.load_config();
@@ -653,6 +774,14 @@
     cfg.downloads.directory = document.getElementById('cfg-download-dir').value;
     cfg.historical_ryan = document.getElementById('cfg-historical').value;
     cfg.anthropic_api_key = document.getElementById('cfg-api-key').value;
+
+    // Airtable
+    cfg.airtable = cfg.airtable || {};
+    cfg.airtable.enabled = document.getElementById('cfg-airtable-enabled').checked;
+    cfg.airtable.token = document.getElementById('cfg-airtable-token').value;
+    cfg.airtable.table_url = document.getElementById('cfg-airtable-url').value;
+    cfg.airtable.columns = getSelectedColumns();
+
     await window.pywebview.api.save_config(cfg);
 
     // Save schedule
