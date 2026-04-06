@@ -562,6 +562,7 @@ class PipelineAPI:
                     "--output", fresh_output,
                     "--append-to", historical,
                     "--append-output", append_output,
+                    "--historical-ryan", historical,
                     "--only-new-orders",
                 ]
                 try:
