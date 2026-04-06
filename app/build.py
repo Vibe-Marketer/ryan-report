@@ -11,6 +11,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
@@ -126,6 +127,13 @@ def build(debug: bool = False) -> None:
     name = "Catom"
     main_script = str(APP_DIR / "main.py")
     sep = os.pathsep
+    staging_root = Path(tempfile.mkdtemp(prefix="catom-build-"))
+    execution_stage = staging_root / "execution"
+    shutil.copytree(
+        REPO_ROOT / "execution",
+        execution_stage,
+        ignore=shutil.ignore_patterns("browser_config.json", "__pycache__"),
+    )
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -135,7 +143,7 @@ def build(debug: bool = False) -> None:
         # Bundle the UI files.
         "--add-data", f"{APP_DIR / 'ui'}{sep}ui",
         # Bundle the execution scripts.
-        "--add-data", f"{REPO_ROOT / 'execution'}{sep}execution",
+        "--add-data", f"{execution_stage}{sep}execution",
         # Bundle the state directory.
         "--add-data", f"{REPO_ROOT / 'state'}{sep}state",
         # Bundle directives.

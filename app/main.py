@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import sys
 import threading
 import time
@@ -37,6 +38,28 @@ EXECUTION = APP_ROOT / "execution"
 STATE = APP_ROOT / "state"
 
 
+def _user_config_dir() -> Path:
+    system = platform.system()
+    home = Path.home()
+    if system == "Darwin":
+        return home / "Library" / "Application Support" / "Catom"
+    if system == "Windows":
+        appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        return appdata / "Catom"
+    return home / ".config" / "catom"
+
+
+def _user_config_path() -> Path:
+    return _user_config_dir() / "browser_config.json"
+
+
+def _template_config_path() -> Path:
+    example = EXECUTION / "browser_config.example.json"
+    if example.exists():
+        return example
+    return EXECUTION / "browser_config.json"
+
+
 # ---------------------------------------------------------------------------
 # Pipeline API — exposed to the webview JS layer.
 # ---------------------------------------------------------------------------
@@ -55,17 +78,16 @@ class PipelineAPI:
     # -- Config helpers --
 
     def get_config_path(self) -> str:
-        p = EXECUTION / "browser_config.json"
-        if p.exists():
-            return str(p)
-        ex = EXECUTION / "browser_config.example.json"
-        return str(ex) if ex.exists() else ""
+        p = _user_config_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return str(p)
 
     def load_config(self) -> dict[str, Any]:
-        p = Path(self.get_config_path())
-        if not p.exists():
+        user_path = Path(self.get_config_path())
+        source_path = user_path if user_path.exists() else _template_config_path()
+        if not source_path.exists():
             return {}
-        with p.open("r") as f:
+        with source_path.open("r") as f:
             cfg = json.load(f)
         # Expand ${HOME} etc.
         def _exp(o: Any) -> Any:
@@ -79,7 +101,8 @@ class PipelineAPI:
         return _exp(cfg)
 
     def save_config(self, cfg: dict) -> str:
-        p = EXECUTION / "browser_config.json"
+        p = Path(self.get_config_path())
+        p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("w") as f:
             json.dump(cfg, f, indent=2)
         return "ok"
