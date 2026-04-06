@@ -61,9 +61,46 @@ def _cdp_endpoint() -> str:
     return f"http://localhost:{CDP_PORT}"
 
 
+def _is_default_chrome_dir(exe: str, user_data: str) -> bool:
+    """Return True if the user_data_dir is Chrome's default location.
+
+    Chrome blocks CDP (--remote-debugging-port) when using its default
+    data directory.  We detect this so we can redirect to a dedicated
+    Catom automation profile instead.
+    """
+    exe_lower = exe.lower()
+    is_chrome = "google chrome" in exe_lower or "chrome.exe" in exe_lower
+    if not is_chrome:
+        return False
+    home = str(Path.home())
+    defaults = [
+        os.path.join(home, "Library", "Application Support", "Google", "Chrome"),
+        os.path.join(home, "AppData", "Local", "Google", "Chrome", "User Data"),
+        os.path.join(home, ".config", "google-chrome"),
+    ]
+    resolved = os.path.realpath(user_data)
+    return any(os.path.realpath(d) == resolved for d in defaults)
+
+
+def _catom_automation_profile() -> str:
+    """Return the path to Catom's dedicated Chrome automation profile."""
+    system = platform.system()
+    home = Path.home()
+    if system == "Darwin":
+        base = home / "Library" / "Application Support" / "Catom" / "ChromeProfile"
+    elif system == "Windows":
+        appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        base = appdata / "Catom" / "ChromeProfile"
+    else:
+        base = home / ".config" / "catom" / "ChromeProfile"
+    base.mkdir(parents=True, exist_ok=True)
+    return str(base)
+
+
 def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     """Connect to an existing Chromium browser or launch one with CDP enabled.
 
+    The browser runs headless by default so it never takes over the screen.
     Returns (context, launched) where *launched* is True if we started a new
     process (caller should close it), False if we attached to an existing one.
     """
@@ -86,7 +123,6 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     exe = browser_cfg.get("executable_path")
     profile_dir = browser_cfg.get("profile_directory", "Default")
     user_data = browser_cfg["user_data_dir"]
-
     if not exe:
         raise RuntimeError("Browser executable path is missing in config.")
     if not Path(exe).exists():
@@ -94,17 +130,28 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     if not user_data:
         raise RuntimeError("Browser user data directory is missing in config.")
 
+    # Chrome blocks CDP on its default data directory. Use a dedicated
+    # Catom automation profile instead.
+    if _is_default_chrome_dir(exe, user_data):
+        user_data = _catom_automation_profile()
+        print(f"[INFO] Chrome requires a dedicated profile for automation.")
+        print(f"[INFO] Using: {user_data}")
+
     if exe and _is_browser_running(exe):
         print("[INFO] Browser is running without CDP. Relaunching with CDP enabled...")
         _stop_browser_process(exe)
-        time.sleep(2)
+        time.sleep(3)
 
     launch_args = [
         exe,
         f"--remote-debugging-port={CDP_PORT}",
         f"--user-data-dir={user_data}",
         f"--profile-directory={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--start-minimized",
     ]
+    print("[INFO] Launching browser...")
 
     subprocess.Popen(launch_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -138,12 +185,34 @@ def find_axon_page(context: BrowserContext, base_url: str) -> Page:
     return context.new_page()
 
 
+def _detect_2fa_prompt(page: Page) -> bool:
+    """Return True if the page is showing a 2FA / verification code prompt."""
+    content = page.content().lower()
+    indicators = ["verification code", "two-factor", "2fa", "security code",
+                  "enter code", "enter the code", "one-time"]
+    return any(ind in content for ind in indicators)
+
+
+# Global callback for requesting a 2FA code from the UI.
+# Set by the desktop app before running the pipeline.
+_twofa_callback: Any = None
+
+
+def set_twofa_callback(fn: Any) -> None:
+    """Register a callback that returns a 2FA code string from the user."""
+    global _twofa_callback
+    _twofa_callback = fn
+
+
 def maybe_login(page: Page, config: dict[str, Any]) -> None:
     auth = config["auth"]
     base = auth["base_url"].rstrip("/")
     if page.url.rstrip("/") != base:
         page.goto(auth["base_url"], wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
+
+    # Wait for the page to fully render (headless can be slower).
+    page.wait_for_timeout(2000)
 
     if page.locator("text=User Name").count() == 0:
         return
@@ -151,12 +220,67 @@ def maybe_login(page: Page, config: dict[str, Any]) -> None:
     username = auth.get("username", "")
     password = auth.get("password", "")
     if username and password:
+        # Axon's login fields may start as disabled/hidden in headless.
+        # Use JS to force them visible and enabled before filling.
+        page.evaluate("""() => {
+            const user = document.getElementById('user');
+            const pass = document.getElementById('password');
+            if (user) { user.disabled = false; user.style.display = ''; user.style.visibility = 'visible'; }
+            if (pass) { pass.disabled = false; pass.readOnly = false; pass.style.display = ''; pass.style.visibility = 'visible'; }
+        }""")
+        page.wait_for_timeout(500)
         page.locator("#user").fill(username)
         page.locator("#password").fill(password)
         page.locator("input[type='submit'][value='Login']").click()
         page.wait_for_timeout(5000)
 
-    if page.locator("text=User Name").count():
+    # If we're not on the dashboard yet, check for 2FA or other prompts.
+    # Rather than guessing page content keywords, if login didn't land us
+    # on the dashboard and we have a 2FA callback, prompt the user.
+    if (
+        page.locator("text=Trucking").count() == 0
+        and page.locator("text=Catom Trucking Inc").count() == 0
+    ):
+        # Not on dashboard — could be 2FA, wrong password, or loading.
+        if _twofa_callback:
+            print("[INFO] Login did not reach dashboard — requesting verification code.")
+            code = _twofa_callback()
+            if code:
+                # Find any text/number input that isn't the login fields.
+                page.wait_for_timeout(1000)
+                filled = False
+                for selector in [
+                    "input[name*='code']", "input[name*='otp']",
+                    "input[name*='token']", "input[name*='verify']",
+                    "input[type='tel']", "input[type='number']",
+                    "input[type='text']:not(#user):not(#password)",
+                ]:
+                    field = page.locator(selector).first
+                    if field.count() > 0:
+                        field.fill(code)
+                        filled = True
+                        break
+                if not filled:
+                    # Last resort: try filling any visible input on the page.
+                    page.evaluate(f"""() => {{
+                        const inputs = document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"]');
+                        for (const inp of inputs) {{
+                            if (inp.id !== 'user' && inp.id !== 'password' && inp.offsetParent !== null) {{
+                                inp.value = {json.dumps(code)};
+                                inp.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                return;
+                            }}
+                        }}
+                    }}""")
+                # Submit the code by pressing Enter.
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(5000)
+
+    # Wait for dashboard to appear.
+    if (
+        page.locator("text=Trucking").count() == 0
+        and page.locator("text=Catom Trucking Inc").count() == 0
+    ):
         timeout_seconds = int(auth.get("manual_login_timeout_seconds", 180))
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:

@@ -60,6 +60,24 @@ def _template_config_path() -> Path:
     return EXECUTION / "browser_config.json"
 
 
+def _legacy_bundled_config_paths() -> list[Path]:
+    return [
+        EXECUTION / "browser_config.json",
+        APP_ROOT / "_internal" / "execution" / "browser_config.json",
+        APP_ROOT / "app" / "_internal" / "execution" / "browser_config.json",
+    ]
+
+
+def _remove_legacy_bundled_configs() -> None:
+    for path in _legacy_bundled_config_paths():
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            # Ignore cleanup failures. The app should still prefer user config.
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Pipeline API — exposed to the webview JS layer.
 # ---------------------------------------------------------------------------
@@ -71,9 +89,36 @@ class PipelineAPI:
         self._window = window
         self._running = False
         self._log_lines: list[str] = []
+        _remove_legacy_bundled_configs()
 
     def set_window(self, window: webview.Window) -> None:
         self._window = window
+
+    # -- 2FA bridge --
+
+    def _request_twofa_code(self) -> str:
+        """Ask the UI for a 2FA code. Blocks the pipeline thread until the
+        user submits a code (or skips) in the Catom UI dialog."""
+        if not self._window:
+            return ""
+        self._log("[INFO] Two-factor authentication required.")
+        self._log("[INFO] Check your phone/email for the verification code.")
+        self._twofa_code: str | None = None
+        self._twofa_event = threading.Event()
+        # Trigger the JS dialog from the UI thread.
+        self._window.evaluate_js(
+            "showTwoFA().then(code => window.pywebview.api.submit_twofa_code(code))"
+        )
+        # Block until the user responds (up to 3 minutes).
+        self._twofa_event.wait(timeout=180)
+        return (self._twofa_code or "").strip()
+
+    def submit_twofa_code(self, code: str) -> str:
+        """Called from JS when the user submits the 2FA code."""
+        self._twofa_code = code
+        if hasattr(self, "_twofa_event"):
+            self._twofa_event.set()
+        return "ok"
 
     # -- Config helpers --
 
@@ -160,7 +205,10 @@ class PipelineAPI:
     # -- Auto-detection --
 
     def is_configured(self) -> bool:
-        """Return True if a valid config exists with credentials filled in."""
+        """Return True only when the user has saved a real config."""
+        user_path = Path(self.get_config_path())
+        if not user_path.exists():
+            return False
         cfg = self.load_config()
         return bool(cfg.get("auth", {}).get("username"))
 
@@ -230,6 +278,12 @@ class PipelineAPI:
 
         for name, exe, user_data in candidates:
             if Path(exe).exists():
+                # Chrome blocks CDP on its default data directory.
+                # Use a dedicated Catom automation profile instead.
+                if "Google Chrome" in name:
+                    catom_profile = str(_user_config_dir() / "ChromeProfile")
+                    Path(catom_profile).mkdir(parents=True, exist_ok=True)
+                    user_data = catom_profile
                 browsers.append({
                     "name": name,
                     "path": exe,
@@ -373,10 +427,7 @@ class PipelineAPI:
                 process.stdout.close()
 
     def _run(self, mode: str) -> None:
-        import subprocess
-
         try:
-            python = sys.executable
             config = self.get_config_path()
             cfg = self.load_config()
 
@@ -389,23 +440,61 @@ class PipelineAPI:
                 self._log("[ERROR] Preflight validation failed. Fix settings and try again.")
                 return
 
+            # Import the execution modules — works in both dev and frozen modes.
+            sys.path.insert(0, str(EXECUTION.parent))
+            from execution.download_reports import load_config as dl_load_config
+            from execution.download_reports import (
+                find_axon_page,
+                launch_context,
+                maybe_login,
+                run_report,
+                set_twofa_callback,
+            )
+
+            # Register the 2FA callback so the download code can prompt the UI.
+            set_twofa_callback(self._request_twofa_code)
+
             if mode in ("all", "download"):
-                download_timeout = self._download_timeout_seconds(cfg)
                 self._log("[1/2] Downloading reports from Axon...")
-                self._log(f"[INFO] Download timeout budget: {download_timeout}s")
-                download_cmd = [
-                    python,
-                    "-u",
-                    str(EXECUTION / "download_reports.py"),
-                    "--config",
-                    config,
-                ]
-                result_code = self._run_command_streaming(
-                    download_cmd,
-                    timeout=download_timeout,
-                )
-                if result_code != 0:
-                    self._log(f"[ERROR] Download failed (exit {result_code})")
+                try:
+                    dl_cfg = dl_load_config(Path(config))
+                    downloads_dir = Path(dl_cfg["downloads"]["directory"])
+                    downloads_dir.mkdir(parents=True, exist_ok=True)
+
+                    self._log("[INFO] Connecting to browser...")
+                    context, we_launched = launch_context(dl_cfg)
+                    self._log("[INFO] Browser connected")
+
+                    try:
+                        page = find_axon_page(context, dl_cfg["auth"]["base_url"])
+                        page.set_viewport_size({"width": 1600, "height": 1000})
+                        self._log("[INFO] Logging in to Axon...")
+                        maybe_login(page, dl_cfg)
+                        self._log("[INFO] Logged in to Axon")
+
+                        self._downloaded_files: list[Path] = []
+                        for report in dl_cfg["reports"]:
+                            if report.get("enabled", True) is False:
+                                continue
+                            self._log(f"[INFO] Downloading {report['name']}...")
+                            try:
+                                result = run_report(page, report, downloads_dir)
+                                if result:
+                                    self._downloaded_files.append(result)
+                                    self._log(f"[OK] Downloaded {report['name']}: {result.name}")
+                            except Exception as exc:
+                                self._log(f"[ERROR] Failed to download {report['name']}: {exc}")
+                                if mode == "download":
+                                    return
+                    finally:
+                        if we_launched:
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+
+                except Exception as exc:
+                    self._log(f"[ERROR] Download failed: {exc}")
                     if mode == "download":
                         return
                     build_errors = self._preflight_build_inputs(cfg)
@@ -425,24 +514,51 @@ class PipelineAPI:
                     self._log("[ERROR] Build preflight failed.")
                     return
                 self._log(f"[{step}] Building Ryan report...")
-                self._log(f"[INFO] Build timeout budget: {self._build_timeout_seconds()}s")
-                cmd = [
-                    python,
-                    "-u",
-                    str(EXECUTION / "run_pipeline.py"),
-                    "--config",
-                    config,
-                    "--skip-download",
+
+                dl_dir = cfg.get("downloads", {}).get("directory", "")
+                if not dl_dir:
+                    dl_dir = str(Path.home() / "Downloads" / "ryan-moves-and-tests")
+                historical = cfg.get("historical_ryan", "") or str(Path(dl_dir) / "2026 RYAN MOVES.csv")
+                fresh_output = str(Path(dl_dir) / "generated-ryan-report-latest-new-only.csv")
+                append_output = str(Path(dl_dir) / "append-ryan-report-latest.csv")
+
+                from execution.build_ryan_report import main as build_main
+                build_args = [
+                    "--input-dir", dl_dir,
+                    "--output", fresh_output,
+                    "--append-to", historical,
+                    "--append-output", append_output,
+                    "--only-new-orders",
                 ]
-                result_code = self._run_command_streaming(
-                    cmd,
-                    timeout=self._build_timeout_seconds(),
-                )
-                if result_code != 0:
-                    self._log(f"[ERROR] Build failed (exit {result_code})")
+                try:
+                    # build_ryan_report.main() uses argparse — patch sys.argv
+                    old_argv = sys.argv
+                    sys.argv = ["build_ryan_report"] + build_args
+                    try:
+                        build_main()
+                    finally:
+                        sys.argv = old_argv
+                    self._log("[OK] Build complete")
+                except SystemExit as exc:
+                    if exc.code and exc.code != 0:
+                        self._log(f"[ERROR] Build failed (exit {exc.code})")
+                        return
+                except Exception as exc:
+                    self._log(f"[ERROR] Build failed: {exc}")
                     return
 
             self._log("[DONE] Pipeline complete!")
+
+            # Clean up: delete only the source files downloaded in THIS run.
+            downloaded = getattr(self, "_downloaded_files", [])
+            if downloaded:
+                for f in downloaded:
+                    try:
+                        if f.exists():
+                            f.unlink()
+                            self._log(f"  Cleaned up: {f.name}")
+                    except OSError:
+                        pass
 
             # List output files.
             dl_dir = Path(cfg.get("downloads", {}).get("directory", ""))

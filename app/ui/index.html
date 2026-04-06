@@ -451,6 +451,20 @@
   </div>
 </div>
 
+<!-- 2FA Code Dialog -->
+<div id="twofa-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; display:none; align-items:center; justify-content:center;">
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:28px 32px; max-width:380px; width:90%; text-align:center;">
+    <div style="font-size:32px; margin-bottom:12px;">&#128274;</div>
+    <h3 style="font-size:17px; font-weight:600; margin-bottom:6px;">Verification Code Required</h3>
+    <p style="font-size:13px; color:var(--text-dim); margin-bottom:20px;">Axon sent a verification code to the account owner. Enter it below.</p>
+    <input type="text" id="twofa-code" placeholder="Enter code" style="width:100%; padding:12px 16px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:18px; text-align:center; letter-spacing:0.2em; font-family:'SF Mono',monospace;" maxlength="10" autocomplete="off">
+    <div style="display:flex; gap:10px; margin-top:20px;">
+      <button class="btn btn-secondary" style="flex:1; justify-content:center;" onclick="submitTwoFA('')">Skip</button>
+      <button class="btn btn-primary" style="flex:1; justify-content:center;" onclick="submitTwoFA(document.getElementById('twofa-code').value)">Submit</button>
+    </div>
+  </div>
+</div>
+
 <div class="status-bar">
   <span>
     <span class="status-dot idle" id="status-dot"></span>
@@ -588,7 +602,7 @@
     const cfg = {
       browser: {
         engine: 'chromium',
-        headless: false,
+        headless: true,
         executable_path: browser ? browser.path : '',
         user_data_dir: browser ? browser.user_data_dir : '',
         profile_directory: profile
@@ -609,7 +623,7 @@
             { action: "click_tab", name: "Trucking", wait_ms: 2000 },
             { action: "click_menu", text: "Reporter Reports", wait_ms: 3000 },
             { action: "click_menu", text: "New RYAN", wait_ms: 3000 },
-            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 60000 }
+            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 180000 }
           ]
         },
         {
@@ -618,7 +632,7 @@
             { action: "click_tab", name: "Contents", wait_ms: 1000 },
             { action: "click_tab", name: "Trucking", wait_ms: 2000 },
             { action: "click_menu", text: "Order Master Report", wait_ms: 3000 },
-            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 60000 }
+            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 180000 }
           ]
         },
         {
@@ -628,7 +642,7 @@
             { action: "click_tab", name: "Trucking", wait_ms: 2000 },
             { action: "click_menu", text: "Reporter Reports", wait_ms: 3000 },
             { action: "click_menu", text: "audit info", wait_ms: 3000 },
-            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 60000 }
+            { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 180000 }
           ]
         }
       ]
@@ -876,6 +890,23 @@
     const dir = cfg?.downloads?.directory;
     if (dir) await window.pywebview.api.open_folder(dir);
   }
+
+  // 2FA handling
+  let twofaResolve = null;
+  function showTwoFA() {
+    document.getElementById('twofa-overlay').style.display = 'flex';
+    document.getElementById('twofa-code').value = '';
+    document.getElementById('twofa-code').focus();
+    return new Promise(resolve => { twofaResolve = resolve; });
+  }
+  function submitTwoFA(code) {
+    document.getElementById('twofa-overlay').style.display = 'none';
+    if (twofaResolve) { twofaResolve(code); twofaResolve = null; }
+  }
+  // Allow Enter key to submit
+  document.getElementById('twofa-code').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') submitTwoFA(this.value);
+  });
 
   // Boot
   window.addEventListener('pywebviewready', init);

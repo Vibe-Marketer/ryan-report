@@ -8,6 +8,18 @@ import sys
 from pathlib import Path
 
 
+def _python_exe() -> str:
+    """Return a usable Python interpreter, even inside a PyInstaller bundle."""
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    import shutil
+    for candidate in ("python3", "python"):
+        found = shutil.which(candidate)
+        if found:
+            return found
+    return sys.executable
+
+
 def run(cmd: list[str], workdir: Path) -> None:
     completed = subprocess.run(cmd, cwd=workdir)
     if completed.returncode != 0:
@@ -53,13 +65,13 @@ def main() -> None:
 
     if not args.skip_download:
         run(
-            [sys.executable, "execution/download_reports.py", "--config", args.config],
+            [_python_exe(), "execution/download_reports.py", "--config", args.config],
             repo_root,
         )
 
     run(
         [
-            sys.executable,
+            _python_exe(),
             "execution/build_ryan_report.py",
             "--input-dir",
             input_dir,

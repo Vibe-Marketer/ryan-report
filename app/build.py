@@ -16,7 +16,7 @@ from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
-DIST_DIR = REPO_ROOT / "dist"
+DIST_DIR = Path(os.environ.get("CATOM_DIST_DIR", str(REPO_ROOT / "dist"))).expanduser()
 
 
 def _codesign_identity() -> str | None:
@@ -31,6 +31,22 @@ def _installer_identity() -> str | None:
 
 def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
+
+
+def _make_pkg_scripts_dir() -> Path:
+    scripts_dir = Path(tempfile.mkdtemp(prefix="catom-pkg-scripts-"))
+    preinstall = scripts_dir / "preinstall"
+    preinstall.write_text(
+        "#!/bin/sh\n"
+        "set -e\n"
+        "if [ -d \"/Applications/Catom.app\" ]; then\n"
+        "  rm -rf \"/Applications/Catom.app\"\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    preinstall.chmod(0o755)
+    return scripts_dir
 
 
 def _make_macos_app_bundle(name: str) -> Path:
@@ -232,6 +248,8 @@ def build(debug: bool = False) -> None:
             str(app_path),
             "--install-location",
             "/Applications",
+            "--scripts",
+            str(_make_pkg_scripts_dir()),
         ]
         installer_identity = _installer_identity()
         if installer_identity:

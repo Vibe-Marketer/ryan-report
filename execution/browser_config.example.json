@@ -1,10 +1,10 @@
 {
   "browser": {
     "engine": "chromium",
-    "headless": false,
-    "executable_path": "/Applications/Comet.app/Contents/MacOS/Comet",
-    "user_data_dir": "/Users/your-user/Library/Application Support/Comet",
-    "profile_directory": "Profile 1"
+    "headless": true,
+    "executable_path": "",
+    "user_data_dir": "",
+    "profile_directory": "Default"
   },
   "auth": {
     "base_url": "https://catom.axoneta.io/",
@@ -13,43 +13,52 @@
     "manual_login_timeout_seconds": 180
   },
   "downloads": {
-    "directory": "/Users/your-user/Downloads/ryan-moves-and-tests"
+    "directory": ""
   },
   "reports": [
     {
       "enabled": true,
       "name": "new_ryan",
-      "expected_filename_prefix": "New RYAN",
       "steps": [
-        { "action": "goto", "url": "https://catom.axoneta.io/" },
-        { "action": "click_text", "text": "Trucking", "wait_ms": 1500 },
-        { "action": "click_text", "text": "Reporter Reports", "wait_ms": 2000 },
-        { "action": "click_text", "text": "New RYAN", "wait_ms": 1500 },
-        { "action": "click_text", "text": "Export", "timeout_ms": 60000 }
+        { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
+        { "action": "click_tab", "name": "Trucking", "wait_ms": 2000 },
+        { "action": "click_menu", "text": "Reporter Reports", "wait_ms": 3000 },
+        { "action": "click_menu", "text": "New RYAN", "wait_ms": 3000 },
+        { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 180000 }
       ]
     },
     {
       "enabled": true,
       "name": "order_master",
-      "expected_filename_prefix": "Order Master Report",
       "steps": [
-        { "action": "goto", "url": "https://catom.axoneta.io/" },
-        { "action": "click_text", "text": "Trucking", "wait_ms": 1500 },
-        { "action": "click_text", "text": "Order Master Report", "wait_ms": 2000 },
-        { "action": "click_text", "text": "Export", "timeout_ms": 60000 }
+        { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
+        { "action": "click_tab", "name": "Trucking", "wait_ms": 2000 },
+        { "action": "click_menu", "text": "Order Master Report", "wait_ms": 3000 },
+        { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 180000 }
       ]
     },
     {
-      "enabled": false,
+      "enabled": true,
       "name": "audit_info",
-      "expected_filename_prefix": "audit info",
       "steps": [
-        { "action": "goto", "url": "https://catom.axoneta.io/" },
-        { "action": "click_text", "text": "Trucking", "wait_ms": 1500 },
-        { "action": "click_text", "text": "Reporter Reports", "wait_ms": 2000 },
-        { "action": "click_text", "text": "audit info", "wait_ms": 1500 },
-        { "action": "click_text", "text": "Export", "timeout_ms": 60000 }
+        { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
+        { "action": "click_tab", "name": "Trucking", "wait_ms": 2000 },
+        { "action": "click_menu", "text": "Reporter Reports", "wait_ms": 3000 },
+        { "action": "click_menu", "text": "audit info", "wait_ms": 3000 },
+        { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 180000 }
       ]
     }
-  ]
+  ],
+  "historical_ryan": "",
+  "anthropic_api_key": "",
+  "airtable": {
+    "enabled": false,
+    "token": "",
+    "table_url": "",
+    "columns": [
+      "Row", "Truck#", "PO#", "By Whom", "Date Move",
+      "Machine#", "Hour Meter", "Machine Description",
+      "From", "To", "Order#"
+    ]
+  }
 }
