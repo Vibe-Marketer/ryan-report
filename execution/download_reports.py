@@ -107,7 +107,11 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     import subprocess
 
     browser_cfg = config["browser"]
-    playwright = sync_playwright().start()
+    pw_cm = sync_playwright()
+    playwright = pw_cm.start()
+    if not hasattr(playwright, "chromium"):
+        # Fallback: some versions return the context manager itself.
+        playwright = pw_cm.__enter__()
 
     # 1) Try connecting to an already-running browser with CDP.
     try:
