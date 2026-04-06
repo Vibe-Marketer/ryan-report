@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,84 @@ def _installer_identity() -> str | None:
 
 def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
+
+
+def _make_macos_app_bundle(name: str) -> Path:
+    """Wrap the PyInstaller onedir output in a real .app bundle.
+
+    PyInstaller's raw onedir folder is left in dist/<name>. This function
+    creates dist/<name>.app as the launchable artifact and embeds the onedir
+    payload inside Contents/Resources/app.
+    """
+    app_dir = DIST_DIR / f"{name}.app"
+    payload_dir = DIST_DIR / name
+    contents = app_dir / "Contents"
+    macos = contents / "MacOS"
+    resources = contents / "Resources"
+    embedded = resources / "app"
+    icon_src = APP_DIR / "icon.icns"
+
+    if app_dir.exists():
+        shutil.rmtree(app_dir)
+
+    macos.mkdir(parents=True, exist_ok=True)
+    resources.mkdir(parents=True, exist_ok=True)
+
+    if embedded.exists():
+        shutil.rmtree(embedded)
+    shutil.copytree(payload_dir, embedded)
+
+    if icon_src.exists():
+        shutil.copy2(icon_src, resources / "icon.icns")
+
+    launcher = macos / name
+    launcher.write_text(
+        "#!/bin/sh\n"
+        "DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "APP_ROOT=\"$DIR/../Resources/app\"\n"
+        "cd \"$APP_ROOT\"\n"
+        f"exec \"$APP_ROOT/{name}\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+
+    info_plist = contents / "Info.plist"
+    info_plist.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>{name}</string>
+  <key>CFBundleExecutable</key>
+  <string>{name}</string>
+  <key>CFBundleIconFile</key>
+  <string>icon.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.andrewnaegele.catom</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>{name}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+""",
+        encoding="utf-8",
+    )
+
+    return app_dir
 
 
 def _find_playwright_driver() -> str | None:
@@ -103,7 +182,7 @@ def build(debug: bool = False) -> None:
 
     app_path = DIST_DIR / name
     if platform.system() == "Darwin":
-        app_path = DIST_DIR / f"{name}.app"
+        app_path = _make_macos_app_bundle(name)
 
     print(f"\nBuild complete! Output: {app_path}")
 
