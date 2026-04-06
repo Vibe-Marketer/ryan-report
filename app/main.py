@@ -120,6 +120,29 @@ class PipelineAPI:
             self._twofa_event.set()
         return "ok"
 
+    # -- Missing file bridge --
+
+    def _request_missing_file(self, path: str) -> str:
+        """Ask the UI what to do about a missing file. Blocks pipeline thread.
+        Returns: a file path, 'new', or 'cancel'."""
+        if not self._window:
+            return "new"
+        self._missing_file_result: str | None = None
+        self._missing_file_event = threading.Event()
+        import json as _json
+        self._window.evaluate_js(
+            f"showMissingFile({_json.dumps(path)}).then(r => window.pywebview.api.submit_missing_file(r))"
+        )
+        self._missing_file_event.wait(timeout=300)
+        return (self._missing_file_result or "cancel").strip()
+
+    def submit_missing_file(self, result: str) -> str:
+        """Called from JS with a file path, 'new', or 'cancel'."""
+        self._missing_file_result = result
+        if hasattr(self, "_missing_file_event"):
+            self._missing_file_event.set()
+        return "ok"
+
     # -- Config helpers --
 
     def get_config_path(self) -> str:
@@ -192,7 +215,7 @@ class PipelineAPI:
 
         historical = cfg.get("historical_ryan", "")
         if not historical:
-            errors.append("Historical Ryan CSV is not configured.")
+            warnings.append("Historical Ryan CSV is not set — all orders will be treated as new.")
         elif not Path(historical).exists():
             errors.append(f"Historical Ryan CSV does not exist: {historical}")
 
@@ -368,7 +391,7 @@ class PipelineAPI:
 
         historical = cfg.get("historical_ryan", "")
         if not historical:
-            errors.append("Historical Ryan CSV is not configured.")
+            warnings.append("Historical Ryan CSV is not set — all orders will be treated as new.")
         elif not Path(historical).exists():
             errors.append(f"Historical Ryan CSV not found: {historical}")
 
@@ -519,6 +542,21 @@ class PipelineAPI:
                 if not dl_dir:
                     dl_dir = str(Path.home() / "Downloads" / "ryan-moves-and-tests")
                 historical = cfg.get("historical_ryan", "") or str(Path(dl_dir) / "2026 RYAN MOVES.csv")
+                if historical and not Path(historical).exists():
+                    result = self._request_missing_file(historical)
+                    if result == "cancel":
+                        self._log("[INFO] Build cancelled.")
+                        return
+                    elif result == "new":
+                        self._log("[INFO] Starting fresh — all orders will be treated as new.")
+                        Path(historical).parent.mkdir(parents=True, exist_ok=True)
+                        Path(historical).write_text("", encoding="utf-8")
+                    else:
+                        # User picked a new file path
+                        historical = result
+                        cfg["historical_ryan"] = historical
+                        self.save_config(cfg)
+                        self._log(f"[INFO] Updated historical file: {Path(historical).name}")
                 fresh_output = str(Path(dl_dir) / "generated-ryan-report-latest-new-only.csv")
                 append_output = str(Path(dl_dir) / "append-ryan-report-latest.csv")
 

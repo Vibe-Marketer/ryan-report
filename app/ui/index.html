@@ -465,6 +465,21 @@
   </div>
 </div>
 
+<!-- Missing File Dialog -->
+<div id="missing-file-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; align-items:center; justify-content:center;">
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:28px 32px; max-width:420px; width:90%; text-align:center;">
+    <div style="font-size:32px; margin-bottom:12px;">&#128196;</div>
+    <h3 style="font-size:17px; font-weight:600; margin-bottom:6px;">Ryan Moves File Not Found</h3>
+    <p style="font-size:13px; color:var(--text-dim); margin-bottom:8px;" id="missing-file-path"></p>
+    <p style="font-size:13px; color:var(--text-dim); margin-bottom:20px;">Was it moved? You can find it, or start fresh with a new file.</p>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="btn btn-primary" style="justify-content:center;" onclick="missingFileBrowse()">Browse for File</button>
+      <button class="btn btn-secondary" style="justify-content:center;" onclick="submitMissingFile('new')">Start Fresh (Create New)</button>
+      <button class="btn btn-secondary" style="justify-content:center; color:var(--text-dim);" onclick="submitMissingFile('cancel')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="status-bar">
   <span>
     <span class="status-dot idle" id="status-dot"></span>
@@ -907,6 +922,25 @@
   document.getElementById('twofa-code').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') submitTwoFA(this.value);
   });
+
+  // Missing file handling
+  let missingFileResolve = null;
+  function showMissingFile(path) {
+    document.getElementById('missing-file-path').textContent = 'Expected: ' + path;
+    document.getElementById('missing-file-overlay').style.display = 'flex';
+    return new Promise(resolve => { missingFileResolve = resolve; });
+  }
+  async function missingFileBrowse() {
+    const path = await window.pywebview.api.pick_file();
+    if (path) {
+      document.getElementById('missing-file-overlay').style.display = 'none';
+      if (missingFileResolve) { missingFileResolve(path); missingFileResolve = null; }
+    }
+  }
+  function submitMissingFile(action) {
+    document.getElementById('missing-file-overlay').style.display = 'none';
+    if (missingFileResolve) { missingFileResolve(action); missingFileResolve = null; }
+  }
 
   // Boot
   window.addEventListener('pywebviewready', init);
