@@ -375,6 +375,51 @@ class PipelineAPI:
     def _log(self, msg: str) -> None:
         self._log_lines.append(msg)
 
+    def _append_to_xlsx(self, historical_path: str, new_rows_csv: str) -> None:
+        """Append new rows from the generated CSV to the xlsx version of the
+        historical file. If the xlsx doesn't exist yet, create it."""
+        try:
+            import csv as csv_mod
+            from openpyxl import Workbook, load_workbook
+        except ImportError:
+            self._log("[WARN] openpyxl not installed — skipping xlsx append.")
+            return
+
+        new_csv = Path(new_rows_csv)
+        if not new_csv.exists() or new_csv.stat().st_size == 0:
+            return
+
+        # Read the new rows from the generated CSV.
+        with new_csv.open("r", encoding="utf-8-sig") as f:
+            reader = csv_mod.reader(f)
+            all_rows = list(reader)
+        if len(all_rows) < 3:
+            # First 2 rows are headers, need at least 1 data row.
+            return
+        headers = all_rows[:2]
+        data_rows = all_rows[2:]
+
+        # Determine the xlsx path — same name/location as historical but .xlsx
+        hist = Path(historical_path)
+        xlsx_path = hist.with_suffix(".xlsx")
+
+        if xlsx_path.exists():
+            wb = load_workbook(xlsx_path)
+            ws = wb.active
+            # Append only data rows (headers already exist).
+            for row in data_rows:
+                ws.append(row)
+            self._log(f"[OK] Appended {len(data_rows)} rows to {xlsx_path.name}")
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Ryan Moves"
+            for row in headers + data_rows:
+                ws.append(row)
+            self._log(f"[OK] Created {xlsx_path.name} with {len(data_rows)} rows")
+
+        wb.save(xlsx_path)
+
     def _latest_matching_file(self, directory: Path, prefix: str) -> Path | None:
         matches = sorted(
             directory.glob(f"{prefix}*.csv"),
@@ -581,6 +626,9 @@ class PipelineAPI:
                 except Exception as exc:
                     self._log(f"[ERROR] Build failed: {exc}")
                     return
+
+                # Append new rows to the xlsx file if it exists.
+                self._append_to_xlsx(historical, fresh_output)
 
             self._log("[DONE] Pipeline complete!")
 

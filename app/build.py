@@ -197,6 +197,7 @@ def build(debug: bool = False) -> None:
         "webview", "webview.platforms.cocoa", "webview.platforms.edgechromium",
         "playwright", "playwright.sync_api", "playwright._impl",
         "playwright._impl._browser_type", "playwright._impl._connection",
+        "openpyxl",
     ]
     for imp in hidden:
         cmd.extend(["--hidden-import", imp])
