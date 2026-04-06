@@ -108,17 +108,21 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     import subprocess
 
     browser_cfg = config["browser"]
-    # Playwright needs its Node.js driver. In a frozen app the driver path
-    # may not be auto-detected.  Set it explicitly if we're inside PyInstaller.
+
+    # In a PyInstaller bundle, Playwright's bundled Node.js binary often
+    # crashes (OOM / code signing issues).  Use the system node instead,
+    # paired with the bundled Playwright CLI script.
     if getattr(sys, "frozen", False):
-        import playwright as _pw_pkg
+        import shutil
         driver_dir = Path(sys._MEIPASS) / "playwright" / "driver"
-        if driver_dir.exists():
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-            # Point Playwright at the bundled driver.
-            _pw_pkg_driver = Path(_pw_pkg.__file__).parent / "driver"
-            if not _pw_pkg_driver.exists() and driver_dir.exists():
-                os.environ["PLAYWRIGHT_DRIVER_PATH"] = str(driver_dir)
+        cli_js = driver_dir / "package" / "cli.js"
+        # Find a working node: system first, bundled as fallback.
+        system_node = shutil.which("node")
+        bundled_node = str(driver_dir / ("node.exe" if platform.system() == "Windows" else "node"))
+        node_bin = system_node or bundled_node
+        if cli_js.exists():
+            import playwright._impl._driver as _drv
+            _drv.compute_driver_executable = lambda: (node_bin, str(cli_js))
 
     try:
         playwright = sync_playwright().start()
