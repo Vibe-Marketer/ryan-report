@@ -1,257 +1,152 @@
-# Catom SOP
+# Catom App -- How to Run Your Ryan Report
 
-## Purpose
+This guide walks you through installing and using the Catom app to generate your Ryan report.
 
-This SOP explains how to use the Catom / Axon software to generate the files needed for the Ryan report workflow.
+---
 
-This is the practical operator version:
+## What You Need Before Starting
 
-- log in
-- pull the required reports
-- run the Catom app
-- review the output
-- resolve any missing serials if needed
+- A Mac computer
+- Your Axon login info:
+  - Company subdomain (example: `catom`)
+  - Username
+  - Password
+- Your current Ryan moves CSV file (example: `2026 RYAN MOVES.csv`)
 
-## When To Use This
+---
 
-Use this SOP any time you need to:
+## Step 1: Install the App
 
-- pull a fresh Ryan-related export from Catom / Axon
-- generate the updated Ryan moves report
-- append new moves into the existing Ryan ledger
+1. You will receive the installer file:
+   - **Mac**: `Catom.pkg` -- double-click it and follow the prompts. It installs Catom into your Applications folder automatically.
+   - **Windows**: `Catom.exe` -- double-click it and follow the prompts.
+2. Open **Catom** from your Applications folder (Mac) or Start Menu (Windows).
 
-## Systems Used
+---
 
-- Catom / Axon web system
-- Catom desktop app (`Catom.app` or `Catom.exe`)
-- Existing Ryan ledger CSV
+## Step 2: First-Time Setup
 
-## Required Inputs
+When you open Catom for the first time, a setup wizard will walk you through everything.
 
-Before starting, make sure you have:
+### Pick Your Browser
 
-- your Catom / Axon subdomain
-  - example: `catom`
-- your Catom / Axon username
-- your Catom / Axon password
-- the current Ryan ledger CSV
-  - example: `2026 RYAN MOVES.csv`
+The app will show which browsers it found on your computer (Chrome, Comet, or Chromium).
 
-## Output From This Process
+- **Comet** is the easiest option -- no extra verification steps.
+- **Chrome** works great but requires a one-time verification code the first time (see below).
 
-This process produces:
+### Enter Your Axon Credentials
 
-- downloaded Catom source reports
-- a fresh generated Ryan report CSV
-- an append-ready Ryan report CSV
-- an unresolved serial file if manual cleanup is needed
+- **Subdomain** -- just the short name, not the full web address. Example: `catom` (the app builds the full address for you).
+- **Username** -- your Axon login username.
+- **Password** -- your Axon login password.
 
-## Standard Run Frequency
+### Choose Your Historical Ryan CSV
 
-Use this process whenever a fresh Ryan report needs to be built.
+Click the file picker and select your current Ryan moves CSV file. This is the file the app uses to find new moves and build the updated report.
 
-Typical cadence:
+---
 
-- weekly
-- end of billing cycle
-- whenever Ryan asks for updated moves
+## Step 3: Chrome Two-Factor Verification (One Time Only)
 
-## Procedure
+If you chose **Chrome** as your browser, the first time the app connects it will need a verification code. This is a security step from Google, not from the Catom app.
 
-### 1. Open The Catom App
+1. The app will open Chrome in the background to set up a dedicated profile.
+2. A popup will appear asking for a **verification code**.
+3. Check your phone or email for the code (it comes from Google, sent to the account owner).
+4. Enter the code in the popup and click OK.
+5. After this first time, Chrome remembers your verification -- you will not be asked again.
 
-Open the Catom desktop app.
+If you chose **Comet**, skip this step entirely. No verification needed.
 
-On first setup, complete the wizard:
+---
 
-- choose your browser
-- enter your company subdomain
-  - example: `catom`
-- enter your Axon username
-- enter your Axon password
-- choose the historical Ryan ledger CSV
+## Step 4: Run Your Report
 
-Important:
+From the main screen you have three buttons:
 
-- the app builds the full site URL automatically as `https://SUBDOMAIN.axoneta.io`
-- the user should only enter the subdomain portion
+| Button | What It Does |
+|---|---|
+| **Run All** | Downloads reports from Axon, then builds your Ryan report. This is what you will use most of the time. |
+| **Download Only** | Just downloads the source reports from Axon without building anything. |
+| **Build Only** | Builds the Ryan report from files already downloaded. Use this if you already have the source files. |
 
-### 2. Confirm Settings
+### What Happens When You Click Run All
 
-In Settings, confirm:
+1. The app opens your browser in the background -- you will not see it and it will not interrupt your work.
+2. It logs into Axon and downloads three reports: New RYAN, Order Master Report, and audit info.
+3. It builds your updated Ryan report from the downloaded data.
+4. The streaming log on screen shows you what is happening in real time.
+5. When finished, the app cleans up the source files automatically.
 
-- browser selection is correct
-- login credentials are correct
-- download folder is correct
-- historical Ryan CSV path is correct
+### Where to Find Your Output
 
-If anything changed, save settings before running.
+After a successful run, you will find two files in your download folder:
 
-### 3. Run The Full Workflow
+- **generated-ryan-report-latest-new-only.csv** -- only the new moves since your last report.
+- **append-ryan-report-latest.csv** -- the full updated report with everything appended.
 
-From the main Run screen, click:
+---
 
-- `Run All`
+## Step 5: Change Settings (If Needed)
 
-This tells the app to:
+Click the **Settings** tab to update any of the following:
 
-1. connect to the configured browser
-2. log into Catom / Axon if needed
-3. download the required reports
-4. build the updated Ryan report
+- Browser selection
+- Axon credentials (subdomain, username, password)
+- Download folder location
+- Historical Ryan CSV file
+- Schedule (for automatic runs)
+- Airtable push settings
+- Which reports to pull
 
-### 4. Reports Pulled From Catom / Axon
+Always save your changes before running.
 
-The current workflow uses these Catom / Axon reports:
+---
 
-1. `New RYAN`
-2. `Order Master Report`
-3. `audit info`
+## Troubleshooting
 
-Current note:
+### The app will not open
 
-- `audit info` is downloaded by the automation flow
-- it is optional for the main build logic today
-- `New RYAN` and `Order Master Report` are the core required reports
+Go to **System Settings > Privacy & Security** and click **Open Anyway** next to the Catom message.
 
-### 5. Manual Report Paths In Catom / Axon
+### Login fails
 
-If you ever need to pull the reports manually inside the web app, use these paths.
+- Double-check your subdomain, username, and password in Settings.
+- Make sure the subdomain is just the short name (example: `catom`), not the full web address.
 
-#### New RYAN
+### The browser opens but nothing happens
 
-Path:
+- Try switching to a different browser in Settings.
+- If using Chrome, you may need to redo the verification code step.
 
-- `Trucking`
-- `Reporter Reports`
-- `New RYAN`
-- `Export`
+### The report downloads but the build fails
 
-Behavior:
+- Make sure your historical Ryan CSV file is selected correctly in Settings.
+- Make sure the file has not been moved or renamed.
 
-- no filter fields required
-- a `Working...` message may appear
-- file downloads directly
+### I need more help
 
-#### Order Master Report
+Click the **Get Help** button in the app. This sends your logs to an AI assistant that will analyze the problem and give you specific troubleshooting steps. (Requires an Anthropic API key in Settings.)
 
-Path:
+---
 
-- `Trucking`
-- `Order Master Report`
-- `Export`
+## How Often to Run
 
-Expected preset filters:
+Run the report whenever you need updated Ryan moves. Typical schedule:
 
-- `Order End Date` = range
-- `Bill To` = `Ryan, Inc.`
-- `Voided On` = empty
+- Weekly
+- End of billing cycle
+- Whenever Ryan requests updated data
 
-Behavior:
+---
 
-- file downloads directly
+## If the App Is Not Working
 
-#### audit info
+You can always pull reports manually as a backup:
 
-Path:
-
-- `Trucking`
-- `Reporter Reports`
-- `audit info`
-- `Export`
-
-Expected preset filter:
-
-- `Order Date` > `02/01/2026`
-
-Behavior:
-
-- a `Working...` message may appear
-- file downloads directly
-
-## Success Criteria
-
-The run is successful if:
-
-- the app finishes without a fatal error
-- the report files are downloaded
-- a new Ryan output CSV is generated
-- an append-ready CSV is generated
-
-## Post-Run Review
-
-After the run finishes:
-
-1. review the generated output files
-2. confirm the append-ready Ryan CSV was created
-3. check whether `state/unresolved_serials.csv` was produced or updated
-
-If unresolved serials exist:
-
-1. open `state/unresolved_serials.csv`
-2. identify the missing serial descriptions
-3. add confirmed mappings to `state/serial_overrides.csv`
-4. rerun the build
-
-## Common Issues
-
-### Login Fails
-
-Check:
-
-- subdomain is correct
-- username is correct
-- password is correct
-- the full URL should be `https://SUBDOMAIN.axoneta.io`
-
-### Browser Opens But Workflow Does Not Complete
-
-Check:
-
-- the correct browser is selected
-- the browser profile is the one that has Catom access
-- the app still has permission to use that browser profile
-
-### Report Downloads But Build Fails
-
-Check:
-
-- historical Ryan CSV path is correct
-- the chosen Ryan ledger file is the right one
-- the downloaded source files exist in the configured download folder
-
-### Output Has Missing Descriptions
-
-This usually means serial mappings are incomplete.
-
-Resolve by:
-
-- reviewing `state/unresolved_serials.csv`
-- adding confirmed mappings to `state/serial_overrides.csv`
-- rerunning the workflow
-
-## Manual Fallback
-
-If automation is temporarily broken:
-
-1. log into Catom / Axon manually
-2. export `New RYAN`
-3. export `Order Master Report`
-4. export `audit info` if needed
-5. place the files in the normal download folder
-6. run the build-only mode in the Catom app
-
-## Operator Notes
-
-- Do not reload the Axon app unnecessarily during automation.
-- If the Catom UI labels change slightly, validate the report names before assuming the automation is wrong.
-- `RYAN TEST` may also appear in the Reporter Reports list, but `New RYAN` is the intended report for this workflow.
-
-## Owner
-
-This SOP should be updated whenever:
-
-- Catom / Axon navigation changes
-- required reports change
-- the Catom desktop app flow changes
-- Ryan report business rules change
+1. Log into Axon in your web browser (`https://YOUR-SUBDOMAIN.axoneta.io`).
+2. Download **New RYAN** from Trucking > Reporter Reports > New RYAN > Export.
+3. Download **Order Master Report** from Trucking > Order Master Report > Export.
+4. Place the downloaded files in your normal download folder.
+5. Open Catom and click **Build Only** to generate the report from those files.
