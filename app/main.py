@@ -289,6 +289,9 @@ class PipelineAPI:
                  f"{programfiles}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
                  f"{localappdata}\\BraveSoftware\\Brave-Browser\\User Data"),
                 ("Microsoft Edge",
+                 f"{programfiles}\\Microsoft\\Edge\\Application\\msedge.exe",
+                 f"{localappdata}\\Microsoft\\Edge\\User Data"),
+                ("Microsoft Edge (x86)",
                  f"{programfiles86}\\Microsoft\\Edge\\Application\\msedge.exe",
                  f"{localappdata}\\Microsoft\\Edge\\User Data"),
             ]
@@ -956,9 +959,12 @@ class PipelineAPI:
         import plistlib
         import subprocess
 
-        python = sys.executable
         config = self.get_config_path()
-        script = str(EXECUTION / "run_pipeline.py")
+        # In frozen app, launch the app binary; in dev, use python + script.
+        if getattr(sys, "frozen", False):
+            program_args = ["/Applications/Catom.app/Contents/MacOS/Catom", "--run-scheduled"]
+        else:
+            program_args = [sys.executable, str(EXECUTION / "run_pipeline.py"), "--config", config]
 
         # Build the calendar interval.
         cal: dict[str, int] = {"Hour": hour, "Minute": minute}
@@ -971,7 +977,7 @@ class PipelineAPI:
 
         plist = {
             "Label": "com.andrewnaegele.catom",
-            "ProgramArguments": [python, script, "--config", config],
+            "ProgramArguments": program_args,
             "StartCalendarInterval": cal,
             "WorkingDirectory": str(APP_ROOT),
             "StandardOutPath": str(Path.home() / "Library/Logs/catom-report.log"),
@@ -993,9 +999,11 @@ class PipelineAPI:
     def _set_windows_schedule(self, day: str, hour: int, minute: int) -> str:
         import subprocess
 
-        python = sys.executable
         config = self.get_config_path()
-        script = str(EXECUTION / "run_pipeline.py")
+        if getattr(sys, "frozen", False):
+            program = f'"{sys.executable}" "--run-scheduled"'
+        else:
+            program = f'"{sys.executable}" "{EXECUTION / "run_pipeline.py"}" "--config" "{config}"'
         task = self._task_name()
         time_str = f"{hour:02d}:{minute:02d}"
 
@@ -1011,7 +1019,7 @@ class PipelineAPI:
 
         cmd = [
             "schtasks", "/create", "/tn", task,
-            "/tr", f'"{python}" "{script}" "--config" "{config}"',
+            "/tr", program,
             "/sc", day_arg,
             "/st", time_str,
         ]
