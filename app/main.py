@@ -389,12 +389,8 @@ class PipelineAPI:
         if not dl_dir.exists():
             return [f"Download directory does not exist: {dl_dir}"]
 
-        historical = cfg.get("historical_ryan", "")
-        if not historical:
-            warnings.append("Historical Ryan CSV is not set — all orders will be treated as new.")
-        elif not Path(historical).exists():
-            errors.append(f"Historical Ryan CSV not found: {historical}")
-
+        # Historical file is handled separately with the missing file dialog.
+        # Don't block the build here — just check for required source CSVs.
         required_prefixes = ["Order Master Report", "New RYAN"]
         for prefix in required_prefixes:
             if not self._latest_matching_file(dl_dir, prefix):
