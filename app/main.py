@@ -345,7 +345,7 @@ class PipelineAPI:
         result = self._window.create_file_dialog(
             webview.OPEN_DIALOG,
             allow_multiple=False,
-            file_types=("CSV Files (*.csv)", "All Files (*.*)"),
+            file_types=("Spreadsheets (*.csv;*.xlsx;*.xls)", "CSV Files (*.csv)", "Excel Files (*.xlsx;*.xls)", "All Files (*.*)"),
         )
         if result and len(result) > 0:
             return result[0]

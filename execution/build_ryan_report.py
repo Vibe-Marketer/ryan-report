@@ -74,6 +74,22 @@ class GeneratedRow:
 
 
 def read_csv_rows(path: Path) -> list[list[str]]:
+    # Handle xlsx files natively.
+    if path.suffix.lower() in (".xlsx", ".xls"):
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(path, read_only=True, data_only=True)
+            ws = wb.active
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append([str(cell) if cell is not None else "" for cell in row])
+            wb.close()
+            return rows
+        except ImportError:
+            raise RuntimeError(
+                f"Cannot read {path.name}: openpyxl is required for xlsx files. "
+                f"Install it with: pip install openpyxl"
+            )
     for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             with path.open("r", encoding=encoding, newline="") as handle:
