@@ -17,6 +17,20 @@ REPO_ROOT = APP_DIR.parent
 DIST_DIR = REPO_ROOT / "dist"
 
 
+def _codesign_identity() -> str | None:
+    identity = os.environ.get("CATOM_CODESIGN_IDENTITY", "").strip()
+    return identity or None
+
+
+def _installer_identity() -> str | None:
+    identity = os.environ.get("CATOM_INSTALLER_IDENTITY", "").strip()
+    return identity or None
+
+
+def _run(cmd: list[str]) -> None:
+    subprocess.run(cmd, check=True)
+
+
 def _find_playwright_driver() -> str | None:
     """Locate the playwright driver directory (contains the Node.js runtime)."""
     try:
@@ -85,7 +99,7 @@ def build(debug: bool = False) -> None:
         cmd.extend(["--hidden-import", imp])
 
     print(f"Building '{name}' for {platform.system()}...")
-    subprocess.run(cmd, check=True)
+    _run(cmd)
 
     app_path = DIST_DIR / name
     if platform.system() == "Darwin":
@@ -93,26 +107,75 @@ def build(debug: bool = False) -> None:
 
     print(f"\nBuild complete! Output: {app_path}")
 
-    # Create DMG on macOS.
+    # macOS packaging/signing.
     if platform.system() == "Darwin" and not debug:
+        identity = _codesign_identity()
+        sign_label = identity if identity else "-"
+        if identity:
+            print(f"Signing app with identity: {identity}")
+        else:
+            print("No Developer ID identity configured. Applying ad hoc signature for local verification.")
+
+        _run([
+            "codesign",
+            "--force",
+            "--deep",
+            "--sign",
+            sign_label,
+            "--options",
+            "runtime",
+            "--timestamp=none",
+            str(app_path),
+        ])
+        _run([
+            "codesign",
+            "--verify",
+            "--deep",
+            "--strict",
+            "--verbose=2",
+            str(app_path),
+        ])
+
+        pkg_path = DIST_DIR / f"{name}.pkg"
+        pkg_path.unlink(missing_ok=True)
+        print(f"Creating PKG: {pkg_path}")
+        pkg_cmd = [
+            "pkgbuild",
+            "--component",
+            str(app_path),
+            "--install-location",
+            "/Applications",
+        ]
+        installer_identity = _installer_identity()
+        if installer_identity:
+            print(f"Signing installer with identity: {installer_identity}")
+            pkg_cmd.extend(["--sign", installer_identity])
+        pkg_cmd.append(str(pkg_path))
+        _run(pkg_cmd)
+        print(f"PKG created: {pkg_path}")
         dmg_path = DIST_DIR / f"{name}.dmg"
         print(f"Creating DMG: {dmg_path}")
-        # Remove old DMG if present.
         dmg_path.unlink(missing_ok=True)
-        subprocess.run([
-            "hdiutil", "create",
-            "-volname", name,
-            "-srcfolder", str(DIST_DIR / f"{name}.app"),
-            "-ov",
-            "-format", "UDZO",  # compressed
-            str(dmg_path),
-        ], check=True)
-        print(f"DMG created: {dmg_path}")
+        try:
+            _run([
+                "hdiutil", "create",
+                "-volname", name,
+                "-srcfolder", str(DIST_DIR / f"{name}.app"),
+                "-ov",
+                "-format", "UDZO",
+                str(dmg_path),
+            ])
+            print(f"DMG created: {dmg_path}")
+        except subprocess.CalledProcessError as exc:
+            print(f"[WARN] DMG creation failed: {exc}")
+            print("[WARN] PKG is still available for install/testing.")
         print(f"\nTo distribute:")
-        print(f"  1. Send '{name}.dmg' to the client")
-        print(f"  2. They open the DMG and drag the app to Applications")
-        print(f"  3. First launch: right-click > Open (bypasses unsigned app warning)")
-        print(f"\n  For no warnings: sign with an Apple Developer certificate ($99/year)")
+        print(f"  1. Send '{name}.dmg' or '{name}.pkg' to the client")
+        print(f"  2. DMG: drag the app to Applications")
+        print(f"  3. PKG: run installer to place app in /Applications")
+        if not identity:
+            print("\n  Note: build is ad hoc signed only. Install a valid Developer ID Application")
+            print("  identity and export CATOM_CODESIGN_IDENTITY to remove Gatekeeper warnings.")
 
 
 if __name__ == "__main__":

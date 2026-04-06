@@ -84,6 +84,56 @@ class PipelineAPI:
             json.dump(cfg, f, indent=2)
         return "ok"
 
+    def validate_config(self) -> dict[str, list[str]]:
+        cfg = self.load_config()
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        browser = cfg.get("browser", {})
+        auth = cfg.get("auth", {})
+        downloads = cfg.get("downloads", {})
+
+        exe_path = browser.get("executable_path", "")
+        if not exe_path:
+            errors.append("Browser executable path is missing.")
+        elif not Path(exe_path).exists():
+            errors.append(f"Browser executable does not exist: {exe_path}")
+
+        user_data_dir = browser.get("user_data_dir", "")
+        if not user_data_dir:
+            errors.append("Browser user data directory is missing.")
+        elif not Path(user_data_dir).exists():
+            warnings.append(f"Browser user data directory does not exist yet: {user_data_dir}")
+
+        if not auth.get("base_url"):
+            errors.append("Axon base URL is missing.")
+        if not auth.get("username"):
+            errors.append("Axon username is missing.")
+        if not auth.get("password"):
+            errors.append("Axon password is missing.")
+
+        download_dir = downloads.get("directory", "")
+        if not download_dir:
+            errors.append("Download directory is missing.")
+        else:
+            dl = Path(download_dir)
+            try:
+                dl.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                errors.append(f"Could not create download directory: {dl} ({exc})")
+
+        historical = cfg.get("historical_ryan", "")
+        if not historical:
+            errors.append("Historical Ryan CSV is not configured.")
+        elif not Path(historical).exists():
+            errors.append(f"Historical Ryan CSV does not exist: {historical}")
+
+        reports = [r for r in cfg.get("reports", []) if r.get("enabled", True)]
+        if not reports:
+            errors.append("No enabled reports are configured.")
+
+        return {"errors": errors, "warnings": warnings}
+
     # -- Auto-detection --
 
     def is_configured(self) -> bool:
@@ -92,51 +142,67 @@ class PipelineAPI:
         return bool(cfg.get("auth", {}).get("username"))
 
     def detect_browsers(self) -> list[dict[str, str]]:
-        """Scan for installed Chromium-based browsers. Returns list of
+        """Scan for supported Chromium-based browsers. Returns list of
         {name, path, user_data_dir} for each found browser."""
         import platform as plat
 
         browsers: list[dict[str, str]] = []
         is_mac = plat.system() == "Darwin"
         is_win = plat.system() == "Windows"
+        is_linux = plat.system() == "Linux"
         home = Path.home()
 
         candidates: list[tuple[str, str, str]] = []
         if is_mac:
             candidates = [
+                ("Comet",
+                 "/Applications/Comet.app/Contents/MacOS/Comet",
+                 str(home / "Library/Application Support/Comet")),
                 ("Google Chrome",
                  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                  str(home / "Library/Application Support/Google/Chrome")),
+                ("Chromium",
+                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                 str(home / "Library/Application Support/Chromium")),
                 ("Brave Browser",
                  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
                  str(home / "Library/Application Support/BraveSoftware/Brave-Browser")),
                 ("Microsoft Edge",
                  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
                  str(home / "Library/Application Support/Microsoft Edge")),
-                ("Comet",
-                 "/Applications/Comet.app/Contents/MacOS/Comet",
-                 str(home / "Library/Application Support/Comet")),
-                ("Chromium",
-                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                 str(home / "Library/Application Support/Chromium")),
             ]
         elif is_win:
             localappdata = os.environ.get("LOCALAPPDATA", "")
             programfiles = os.environ.get("PROGRAMFILES", "C:\\Program Files")
             programfiles86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
             candidates = [
+                ("Comet",
+                 f"{localappdata}\\Programs\\Comet\\Comet.exe",
+                 f"{localappdata}\\Comet\\User Data"),
                 ("Google Chrome",
                  f"{programfiles}\\Google\\Chrome\\Application\\chrome.exe",
                  f"{localappdata}\\Google\\Chrome\\User Data"),
                 ("Google Chrome (x86)",
                  f"{programfiles86}\\Google\\Chrome\\Application\\chrome.exe",
                  f"{localappdata}\\Google\\Chrome\\User Data"),
+                ("Chromium",
+                 f"{programfiles}\\Chromium\\Application\\chromium.exe",
+                 f"{localappdata}\\Chromium\\User Data"),
+                ("Chromium (x86)",
+                 f"{programfiles86}\\Chromium\\Application\\chromium.exe",
+                 f"{localappdata}\\Chromium\\User Data"),
                 ("Brave Browser",
                  f"{programfiles}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
                  f"{localappdata}\\BraveSoftware\\Brave-Browser\\User Data"),
                 ("Microsoft Edge",
                  f"{programfiles86}\\Microsoft\\Edge\\Application\\msedge.exe",
                  f"{localappdata}\\Microsoft\\Edge\\User Data"),
+            ]
+        elif is_linux:
+            candidates = [
+                ("Comet", "/usr/bin/comet", str(home / ".config" / "Comet")),
+                ("Google Chrome", "/usr/bin/google-chrome", str(home / ".config" / "google-chrome")),
+                ("Chromium", "/usr/bin/chromium", str(home / ".config" / "chromium")),
             ]
 
         for name, exe, user_data in candidates:
@@ -209,41 +275,153 @@ class PipelineAPI:
     def _log(self, msg: str) -> None:
         self._log_lines.append(msg)
 
+    def _latest_matching_file(self, directory: Path, prefix: str) -> Path | None:
+        matches = sorted(
+            directory.glob(f"{prefix}*.csv"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        return matches[0] if matches else None
+
+    def _preflight_build_inputs(self, cfg: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        dl_dir = Path(cfg.get("downloads", {}).get("directory", ""))
+        if not dl_dir.exists():
+            return [f"Download directory does not exist: {dl_dir}"]
+
+        historical = cfg.get("historical_ryan", "")
+        if not historical:
+            errors.append("Historical Ryan CSV is not configured.")
+        elif not Path(historical).exists():
+            errors.append(f"Historical Ryan CSV not found: {historical}")
+
+        required_prefixes = ["Order Master Report", "New RYAN"]
+        for prefix in required_prefixes:
+            if not self._latest_matching_file(dl_dir, prefix):
+                errors.append(f"Required source CSV not found in downloads: {prefix}*.csv")
+
+        return errors
+
+    def _download_timeout_seconds(self, cfg: dict[str, Any]) -> int:
+        auth = cfg.get("auth", {})
+        reports = [r for r in cfg.get("reports", []) if r.get("enabled", True)]
+        manual_login_timeout = int(auth.get("manual_login_timeout_seconds", 180))
+        per_report_budget = 120
+        launch_buffer = 180
+        return max(900, manual_login_timeout + (len(reports) * per_report_budget) + launch_buffer)
+
+    def _build_timeout_seconds(self) -> int:
+        return 900
+
+    def _run_command_streaming(
+        self,
+        cmd: list[str],
+        timeout: int,
+        cwd: Path | None = None,
+    ) -> int:
+        import subprocess
+
+        process = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        start = time.time()
+        assert process.stdout is not None
+        try:
+            for raw_line in iter(process.stdout.readline, ""):
+                line = raw_line.rstrip("\n")
+                if line:
+                    self._log(line)
+                if time.time() - start > timeout:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+
+            return process.wait(timeout=max(1, int(timeout - (time.time() - start))))
+        except subprocess.TimeoutExpired:
+            process.kill()
+            raise
+        finally:
+            if process.stdout:
+                process.stdout.close()
+
     def _run(self, mode: str) -> None:
         import subprocess
 
         try:
             python = sys.executable
             config = self.get_config_path()
+            cfg = self.load_config()
+
+            validation = self.validate_config()
+            for warning in validation["warnings"]:
+                self._log(f"[WARN] {warning}")
+            if validation["errors"]:
+                for error in validation["errors"]:
+                    self._log(f"[ERROR] {error}")
+                self._log("[ERROR] Preflight validation failed. Fix settings and try again.")
+                return
 
             if mode in ("all", "download"):
+                download_timeout = self._download_timeout_seconds(cfg)
                 self._log("[1/2] Downloading reports from Axon...")
-                result = subprocess.run(
-                    [python, str(EXECUTION / "download_reports.py"), "--config", config],
-                    capture_output=True, text=True, timeout=300,
+                self._log(f"[INFO] Download timeout budget: {download_timeout}s")
+                download_cmd = [
+                    python,
+                    "-u",
+                    str(EXECUTION / "download_reports.py"),
+                    "--config",
+                    config,
+                ]
+                result_code = self._run_command_streaming(
+                    download_cmd,
+                    timeout=download_timeout,
                 )
-                for line in (result.stdout + result.stderr).strip().splitlines():
-                    self._log(line)
-                if result.returncode != 0:
-                    self._log(f"[ERROR] Download failed (exit {result.returncode})")
+                if result_code != 0:
+                    self._log(f"[ERROR] Download failed (exit {result_code})")
                     if mode == "download":
                         return
+                    build_errors = self._preflight_build_inputs(cfg)
+                    if build_errors:
+                        for error in build_errors:
+                            self._log(f"[ERROR] {error}")
+                        self._log("[ERROR] Build step skipped because required inputs are missing.")
+                        return
+                    self._log("[WARN] Download failed, but required local CSVs already exist. Continuing with build.")
 
             if mode in ("all", "build"):
                 step = "2/2" if mode == "all" else "1/1"
+                build_errors = self._preflight_build_inputs(cfg)
+                if build_errors:
+                    for error in build_errors:
+                        self._log(f"[ERROR] {error}")
+                    self._log("[ERROR] Build preflight failed.")
+                    return
                 self._log(f"[{step}] Building Ryan report...")
-                cmd = [python, str(EXECUTION / "run_pipeline.py"), "--config", config, "--skip-download"]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                for line in (result.stdout + result.stderr).strip().splitlines():
-                    self._log(line)
-                if result.returncode != 0:
-                    self._log(f"[ERROR] Build failed (exit {result.returncode})")
+                self._log(f"[INFO] Build timeout budget: {self._build_timeout_seconds()}s")
+                cmd = [
+                    python,
+                    "-u",
+                    str(EXECUTION / "run_pipeline.py"),
+                    "--config",
+                    config,
+                    "--skip-download",
+                ]
+                result_code = self._run_command_streaming(
+                    cmd,
+                    timeout=self._build_timeout_seconds(),
+                )
+                if result_code != 0:
+                    self._log(f"[ERROR] Build failed (exit {result_code})")
                     return
 
             self._log("[DONE] Pipeline complete!")
 
             # List output files.
-            cfg = self.load_config()
             dl_dir = Path(cfg.get("downloads", {}).get("directory", ""))
             if dl_dir.exists():
                 for f in sorted(dl_dir.iterdir()):
@@ -256,8 +434,10 @@ class PipelineAPI:
             if airtable.get("enabled") and airtable.get("token") and airtable.get("table_url"):
                 self._push_to_airtable(cfg)
 
-        except subprocess.TimeoutExpired:
-            self._log("[ERROR] Pipeline timed out after 5 minutes")
+        except subprocess.TimeoutExpired as exc:
+            cmd_name = Path(exc.cmd[1]).name if isinstance(exc.cmd, list) and len(exc.cmd) > 1 else "step"
+            self._log(f"[ERROR] {cmd_name} timed out after {int(exc.timeout)} seconds")
+            self._log("[ERROR] This usually means login, browser attach, or report export took too long.")
         except Exception as e:
             self._log(f"[ERROR] {e}")
         finally:

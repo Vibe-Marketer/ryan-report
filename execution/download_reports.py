@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import time
 from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import BrowserContext, Frame, Page, TimeoutError, sync_playwright
 
-CDP_PORT = 9224  # Port for Chrome DevTools Protocol connection to Comet.
+CDP_PORT = 9224  # Port for Chrome DevTools Protocol connection to a Chromium browser.
 VIEWPORT = {"width": 1600, "height": 1000}
 
 
@@ -30,8 +31,30 @@ def load_config(path: Path) -> dict[str, Any]:
 
 def _is_browser_running(exe_path: str) -> bool:
     import subprocess
-    result = subprocess.run(["pgrep", "-f", exe_path], capture_output=True)
-    return result.returncode == 0
+    system = platform.system()
+    if system in {"Darwin", "Linux"}:
+        result = subprocess.run(["pgrep", "-f", exe_path], capture_output=True)
+        return result.returncode == 0
+    if system == "Windows":
+        exe_name = Path(exe_path).name
+        result = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
+            capture_output=True,
+            text=True,
+        )
+        return exe_name.lower() in result.stdout.lower()
+    return False
+
+
+def _stop_browser_process(exe_path: str) -> None:
+    import subprocess
+    system = platform.system()
+    if system in {"Darwin", "Linux"}:
+        subprocess.run(["pkill", "-f", exe_path], check=False)
+        return
+    if system == "Windows":
+        exe_name = Path(exe_path).name
+        subprocess.run(["taskkill", "/IM", exe_name, "/F"], check=False)
 
 
 def _cdp_endpoint() -> str:
@@ -39,7 +62,7 @@ def _cdp_endpoint() -> str:
 
 
 def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
-    """Connect to an existing browser or launch one with CDP enabled.
+    """Connect to an existing Chromium browser or launch one with CDP enabled.
 
     Returns (context, launched) where *launched* is True if we started a new
     process (caller should close it), False if we attached to an existing one.
@@ -64,9 +87,16 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     profile_dir = browser_cfg.get("profile_directory", "Default")
     user_data = browser_cfg["user_data_dir"]
 
+    if not exe:
+        raise RuntimeError("Browser executable path is missing in config.")
+    if not Path(exe).exists():
+        raise RuntimeError(f"Browser executable does not exist: {exe}")
+    if not user_data:
+        raise RuntimeError("Browser user data directory is missing in config.")
+
     if exe and _is_browser_running(exe):
         print("[INFO] Browser is running without CDP. Relaunching with CDP enabled...")
-        subprocess.run(["pkill", "-f", exe], check=False)
+        _stop_browser_process(exe)
         time.sleep(2)
 
     launch_args = [
