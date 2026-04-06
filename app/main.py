@@ -607,10 +607,6 @@ class PipelineAPI:
             if airtable.get("enabled") and airtable.get("token") and airtable.get("table_url"):
                 self._push_to_airtable(cfg)
 
-        except subprocess.TimeoutExpired as exc:
-            cmd_name = Path(exc.cmd[1]).name if isinstance(exc.cmd, list) and len(exc.cmd) > 1 else "step"
-            self._log(f"[ERROR] {cmd_name} timed out after {int(exc.timeout)} seconds")
-            self._log("[ERROR] This usually means login, browser attach, or report export took too long.")
         except Exception as e:
             self._log(f"[ERROR] {e}")
         finally:
