@@ -113,13 +113,10 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     # crashes (OOM / code signing issues).  Use the system node instead,
     # paired with the bundled Playwright CLI script.
     if getattr(sys, "frozen", False):
-        import shutil
         driver_dir = Path(sys._MEIPASS) / "playwright" / "driver"
         cli_js = driver_dir / "package" / "cli.js"
-        # Find a working node: system first, bundled as fallback.
-        system_node = shutil.which("node")
-        bundled_node = str(driver_dir / ("node.exe" if platform.system() == "Windows" else "node"))
-        node_bin = system_node or bundled_node
+        # Use the bundled node (replaced with v22 LTS during build).
+        node_bin = str(driver_dir / ("node.exe" if platform.system() == "Windows" else "node"))
         if cli_js.exists():
             _patched = lambda: (node_bin, str(cli_js))
             import playwright._impl._driver as _drv

@@ -139,6 +139,55 @@ def _find_playwright_driver() -> str | None:
     return None
 
 
+def _fix_playwright_node(app_path: Path) -> None:
+    """Replace Playwright's bundled Node.js with a version that works.
+
+    Playwright ships node v24 which has a V8 CodeRange OOM crash on macOS
+    arm64 when running the driver script.  We download node v22 LTS which
+    is stable and doesn't have this issue.
+    """
+    system = platform.system()
+
+    if system == "Darwin":
+        # Find the bundled node inside the .app or onedir output.
+        candidates = list(app_path.rglob("playwright/driver/node"))
+        if not candidates:
+            print("  [WARN] Playwright driver/node not found in bundle — skipping fix")
+            return
+        bundled_node = candidates[0]
+
+        # Download node v22 LTS for arm64 macOS.
+        import urllib.request
+        import tarfile
+        node_url = "https://nodejs.org/dist/v22.16.0/node-v22.16.0-darwin-arm64.tar.gz"
+        tar_path = Path(tempfile.mkdtemp()) / "node.tar.gz"
+        print(f"  Downloading node v22 LTS for arm64...")
+        urllib.request.urlretrieve(node_url, tar_path)
+        with tarfile.open(tar_path) as tf:
+            member = tf.getmember("node-v22.16.0-darwin-arm64/bin/node")
+            member.name = "node"
+            tf.extract(member, bundled_node.parent)
+        print(f"  Replaced bundled node: {bundled_node}")
+
+    elif system == "Windows":
+        candidates = list(app_path.rglob("playwright/driver/node.exe"))
+        if not candidates:
+            print("  [WARN] Playwright driver/node.exe not found — skipping fix")
+            return
+        bundled_node = candidates[0]
+
+        import urllib.request
+        import zipfile
+        node_url = "https://nodejs.org/dist/v22.16.0/node-v22.16.0-win-x64.zip"
+        zip_path = Path(tempfile.mkdtemp()) / "node.zip"
+        print(f"  Downloading node v22 LTS for Windows x64...")
+        urllib.request.urlretrieve(node_url, zip_path)
+        with zipfile.ZipFile(zip_path) as zf:
+            with zf.open("node-v22.16.0-win-x64/node.exe") as src:
+                bundled_node.write_bytes(src.read())
+        print(f"  Replaced bundled node.exe: {bundled_node}")
+
+
 def build(debug: bool = False) -> None:
     name = "Catom"
     main_script = str(APP_DIR / "main.py")
@@ -210,6 +259,10 @@ def build(debug: bool = False) -> None:
         app_path = _make_macos_app_bundle(name)
 
     print(f"\nBuild complete! Output: {app_path}")
+
+    # Replace Playwright's bundled Node.js with a compatible version.
+    # Playwright ships node v24 which has a V8 CodeRange OOM bug on arm64.
+    _fix_playwright_node(app_path)
 
     # macOS packaging/signing.
     if platform.system() == "Darwin" and not debug:
