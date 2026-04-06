@@ -121,8 +121,12 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
         bundled_node = str(driver_dir / ("node.exe" if platform.system() == "Windows" else "node"))
         node_bin = system_node or bundled_node
         if cli_js.exists():
+            _patched = lambda: (node_bin, str(cli_js))
             import playwright._impl._driver as _drv
-            _drv.compute_driver_executable = lambda: (node_bin, str(cli_js))
+            _drv.compute_driver_executable = _patched
+            # Also patch the local binding in PipeTransport (imported via 'from').
+            import playwright._impl._transport as _transport
+            _transport.compute_driver_executable = _patched
 
     try:
         playwright = sync_playwright().start()
