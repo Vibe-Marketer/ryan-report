@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import platform
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -107,11 +108,25 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     import subprocess
 
     browser_cfg = config["browser"]
-    pw_cm = sync_playwright()
-    playwright = pw_cm.start()
-    if not hasattr(playwright, "chromium"):
-        # Fallback: some versions return the context manager itself.
-        playwright = pw_cm.__enter__()
+    # Playwright needs its Node.js driver. In a frozen app the driver path
+    # may not be auto-detected.  Set it explicitly if we're inside PyInstaller.
+    if getattr(sys, "frozen", False):
+        import playwright as _pw_pkg
+        driver_dir = Path(sys._MEIPASS) / "playwright" / "driver"
+        if driver_dir.exists():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+            # Point Playwright at the bundled driver.
+            _pw_pkg_driver = Path(_pw_pkg.__file__).parent / "driver"
+            if not _pw_pkg_driver.exists() and driver_dir.exists():
+                os.environ["PLAYWRIGHT_DRIVER_PATH"] = str(driver_dir)
+
+    try:
+        playwright = sync_playwright().start()
+    except Exception as start_err:
+        raise RuntimeError(
+            f"Could not start Playwright browser engine: {start_err}. "
+            f"Try restarting the app."
+        )
 
     # 1) Try connecting to an already-running browser with CDP.
     try:
