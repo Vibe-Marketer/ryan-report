@@ -139,14 +139,3 @@ Run the report whenever you need updated Ryan moves. Typical schedule:
 - End of billing cycle
 - Whenever Ryan requests updated data
 
----
-
-## If the App Is Not Working
-
-You can always pull reports manually as a backup:
-
-1. Log into Axon in your web browser (`https://YOUR-SUBDOMAIN.axoneta.io`).
-2. Download **New RYAN** from Trucking > Reporter Reports > New RYAN > Export.
-3. Download **Order Master Report** from Trucking > Order Master Report > Export.
-4. Place the downloaded files in your normal download folder.
-5. Open Catom and click **Build Only** to generate the report from those files.

@@ -227,7 +227,7 @@ def build(debug: bool = False) -> None:
             sign_label,
             "--options",
             "runtime",
-            "--timestamp=none",
+            "--timestamp",
             str(app_path),
         ])
         _run([
