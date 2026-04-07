@@ -334,16 +334,31 @@ def build(debug: bool = False) -> None:
         # Stage the .app inside a temporary root so pkgbuild places it
         # exactly at /Applications/Catom.app (--component is unreliable).
         pkg_root = Path(tempfile.mkdtemp(prefix="catom-pkg-root-"))
-        # Use ditto (not shutil) to avoid ._* extended attribute files
-        # that break pkg extraction.
         subprocess.run(
             ["ditto", str(app_path), str(pkg_root / f"{name}.app")],
             check=True,
+        )
+        # Create a component plist that disables bundle relocation.
+        # Without this, macOS finds existing Catom.app copies by bundle ID
+        # and installs THERE instead of /Applications.
+        comp_plist = Path(tempfile.mkdtemp()) / "component.plist"
+        comp_plist.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+            '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            '<plist version="1.0">\n<array>\n<dict>\n'
+            '  <key>BundleIsRelocatable</key>\n  <false/>\n'
+            '  <key>BundleOverwriteAction</key>\n  <string>upgrade</string>\n'
+            f'  <key>RootRelativeBundlePath</key>\n  <string>{name}.app</string>\n'
+            '</dict>\n</array>\n</plist>\n',
+            encoding="utf-8",
         )
         pkg_cmd = [
             "pkgbuild",
             "--root",
             str(pkg_root),
+            "--component-plist",
+            str(comp_plist),
             "--install-location",
             "/Applications",
             "--scripts",
