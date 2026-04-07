@@ -37,31 +37,45 @@ def _make_pkg_scripts_dir() -> Path:
     scripts_dir = Path(tempfile.mkdtemp(prefix="catom-pkg-scripts-"))
     preinstall = scripts_dir / "preinstall"
     preinstall.write_text(
-        "#!/bin/sh\n"
-        "# Clean install: remove ALL traces of previous Catom installs.\n"
-        "# Runs during pkg install only, not during normal app usage.\n"
-        "\n"
-        "CURRENT_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo root)\n"
-        "USER_HOME=$(eval echo ~$CURRENT_USER)\n"
-        "\n"
-        "# Remove installed app.\n"
-        "rm -rf /Applications/Catom.app 2>/dev/null || true\n"
-        "\n"
-        "# Remove any stale copies on Desktop or Downloads.\n"
-        "rm -rf \"$USER_HOME/Desktop/Catom.app\" 2>/dev/null || true\n"
-        "rm -rf \"$USER_HOME/Downloads/Catom.app\" 2>/dev/null || true\n"
-        "\n"
-        "# Clear user config, Chrome automation profile, and all caches.\n"
-        "rm -rf \"$USER_HOME/Library/Application Support/Catom\" 2>/dev/null || true\n"
-        "rm -rf \"$USER_HOME/Library/WebKit/Catom\" 2>/dev/null || true\n"
-        "rm -rf \"$USER_HOME/Library/Caches/Catom\" 2>/dev/null || true\n"
-        "rm -rf \"$USER_HOME/Library/Saved Application State/com.andrewnaegele.catom.savedState\" 2>/dev/null || true\n"
-        "rm -rf \"$USER_HOME/Library/Preferences/com.andrewnaegele.catom.plist\" 2>/dev/null || true\n"
-        "\n"
-        "# Remove previous package receipts so macOS doesn't think it's an upgrade.\n"
-        "pkgutil --forget com.andrewnaegele.catom 2>/dev/null || true\n"
-        "\n"
-        "exit 0\n",
+        '#!/bin/sh\n'
+        '# Catom preinstall: remove ALL traces of previous installs.\n'
+        '# This runs as root during pkg install.\n'
+        '\n'
+        'CURRENT_USER=$(stat -f \'%Su\' /dev/console 2>/dev/null || echo root)\n'
+        'USER_HOME=$(eval echo ~$CURRENT_USER)\n'
+        '\n'
+        '# Kill any running Catom or automation Chrome.\n'
+        'killall Catom 2>/dev/null || true\n'
+        'killall "Google Chrome" 2>/dev/null || true\n'
+        'sleep 1\n'
+        '\n'
+        '# Remove the installed app.\n'
+        'rm -rf /Applications/Catom.app 2>/dev/null || true\n'
+        '\n'
+        '# Find and remove ANY Catom.app anywhere on the system.\n'
+        'find /Users -maxdepth 4 -name "Catom.app" -type d -exec rm -rf {} + 2>/dev/null || true\n'
+        'find /private/tmp -maxdepth 3 -name "Catom.app" -type d -exec rm -rf {} + 2>/dev/null || true\n'
+        '\n'
+        '# Clear ALL user data: config, Chrome profile, caches, state.\n'
+        'rm -rf "$USER_HOME/Library/Application Support/Catom" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/WebKit/Catom" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/Caches/Catom" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/Caches/com.andrewnaegele.catom" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/Saved Application State/com.andrewnaegele.catom.savedState" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/Preferences/com.andrewnaegele.catom.plist" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/HTTPStorages/com.andrewnaegele.catom" 2>/dev/null || true\n'
+        'rm -rf "$USER_HOME/Library/LaunchAgents/com.andrewnaegele.catom.plist" 2>/dev/null || true\n'
+        '\n'
+        '# Clear Spotlight index for any leftover Catom artifacts.\n'
+        'mdimport -d1 /Applications 2>/dev/null || true\n'
+        '\n'
+        '# Remove package receipts.\n'
+        'pkgutil --forget com.andrewnaegele.catom 2>/dev/null || true\n'
+        '\n'
+        '# Empty Trash of any Catom copies.\n'
+        'find "$USER_HOME/.Trash" -maxdepth 1 -name "Catom*" -exec rm -rf {} + 2>/dev/null || true\n'
+        '\n'
+        'exit 0\n',
         encoding="utf-8",
     )
     preinstall.chmod(0o755)
