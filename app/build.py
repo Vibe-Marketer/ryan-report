@@ -39,9 +39,18 @@ def _make_pkg_scripts_dir() -> Path:
     preinstall.write_text(
         "#!/bin/sh\n"
         "set -e\n"
+        "# Remove old app bundle.\n"
         "if [ -d \"/Applications/Catom.app\" ]; then\n"
         "  rm -rf \"/Applications/Catom.app\"\n"
         "fi\n"
+        "# Clear cached config, browser profile, and app caches so the\n"
+        "# setup wizard runs fresh.  Only runs during pkg install, not\n"
+        "# during normal app usage.\n"
+        "CURRENT_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo root)\n"
+        "USER_HOME=$(eval echo ~$CURRENT_USER)\n"
+        "rm -rf \"$USER_HOME/Library/Application Support/Catom\" 2>/dev/null || true\n"
+        "rm -rf \"$USER_HOME/Library/WebKit/Catom\" 2>/dev/null || true\n"
+        "rm -rf \"$USER_HOME/Library/Caches/Catom\" 2>/dev/null || true\n"
         "exit 0\n",
         encoding="utf-8",
     )
