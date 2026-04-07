@@ -30,34 +30,6 @@ def load_config(path: Path) -> dict[str, Any]:
     return _expand(cfg)
 
 
-def _is_browser_running(exe_path: str) -> bool:
-    import subprocess
-    system = platform.system()
-    if system in {"Darwin", "Linux"}:
-        result = subprocess.run(["pgrep", "-f", exe_path], capture_output=True)
-        return result.returncode == 0
-    if system == "Windows":
-        exe_name = Path(exe_path).name
-        result = subprocess.run(
-            ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
-            capture_output=True,
-            text=True,
-        )
-        return exe_name.lower() in result.stdout.lower()
-    return False
-
-
-def _stop_browser_process(exe_path: str) -> None:
-    import subprocess
-    system = platform.system()
-    if system in {"Darwin", "Linux"}:
-        subprocess.run(["pkill", "-f", exe_path], check=False)
-        return
-    if system == "Windows":
-        exe_name = Path(exe_path).name
-        subprocess.run(["taskkill", "/IM", exe_name, "/F"], check=False)
-
-
 def _cdp_endpoint() -> str:
     return f"http://localhost:{CDP_PORT}"
 

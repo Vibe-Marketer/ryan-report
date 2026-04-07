@@ -94,32 +94,6 @@ class PipelineAPI:
     def set_window(self, window: webview.Window) -> None:
         self._window = window
 
-    # -- 2FA bridge --
-
-    def _request_twofa_code(self) -> str:
-        """Ask the UI for a 2FA code. Blocks the pipeline thread until the
-        user submits a code (or skips) in the Catom UI dialog."""
-        if not self._window:
-            return ""
-        self._log("[INFO] Two-factor authentication required.")
-        self._log("[INFO] Check your phone/email for the verification code.")
-        self._twofa_code: str | None = None
-        self._twofa_event = threading.Event()
-        # Trigger the JS dialog from the UI thread.
-        self._window.evaluate_js(
-            "showTwoFA().then(code => window.pywebview.api.submit_twofa_code(code))"
-        )
-        # Block until the user responds (up to 3 minutes).
-        self._twofa_event.wait(timeout=180)
-        return (self._twofa_code or "").strip()
-
-    def submit_twofa_code(self, code: str) -> str:
-        """Called from JS when the user submits the 2FA code."""
-        self._twofa_code = code
-        if hasattr(self, "_twofa_event"):
-            self._twofa_event.set()
-        return "ok"
-
     # -- Missing file bridge --
 
     def _request_missing_file(self, path: str) -> str:
