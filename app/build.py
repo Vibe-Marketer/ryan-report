@@ -331,14 +331,22 @@ def build(debug: bool = False) -> None:
         pkg_path = DIST_DIR / f"{name}.pkg"
         pkg_path.unlink(missing_ok=True)
         print(f"Creating PKG: {pkg_path}")
+        # Stage the .app inside a temporary root so pkgbuild places it
+        # exactly at /Applications/Catom.app (--component is unreliable).
+        pkg_root = Path(tempfile.mkdtemp(prefix="catom-pkg-root-"))
+        shutil.copytree(app_path, pkg_root / f"{name}.app", symlinks=True)
         pkg_cmd = [
             "pkgbuild",
-            "--component",
-            str(app_path),
+            "--root",
+            str(pkg_root),
             "--install-location",
             "/Applications",
             "--scripts",
             str(_make_pkg_scripts_dir()),
+            "--identifier",
+            "com.andrewnaegele.catom",
+            "--version",
+            "1.0.0",
         ]
         installer_identity = _installer_identity()
         if installer_identity:
