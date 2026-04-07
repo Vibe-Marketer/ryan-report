@@ -334,7 +334,12 @@ def build(debug: bool = False) -> None:
         # Stage the .app inside a temporary root so pkgbuild places it
         # exactly at /Applications/Catom.app (--component is unreliable).
         pkg_root = Path(tempfile.mkdtemp(prefix="catom-pkg-root-"))
-        shutil.copytree(app_path, pkg_root / f"{name}.app", symlinks=True)
+        # Use ditto (not shutil) to avoid ._* extended attribute files
+        # that break pkg extraction.
+        subprocess.run(
+            ["ditto", str(app_path), str(pkg_root / f"{name}.app")],
+            check=True,
+        )
         pkg_cmd = [
             "pkgbuild",
             "--root",
