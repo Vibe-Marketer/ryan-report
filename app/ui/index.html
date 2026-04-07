@@ -83,10 +83,17 @@
   .log-line.error { color: var(--error); }
   .log-line.warn { color: var(--warning); }
   .log-line.dim { color: var(--text-dim); }
+  .log-line.celebrate { color: #38bdf8; }
   .log-empty {
     color: var(--text-dim); font-style: italic;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     font-size: 13px;
+  }
+
+  /* Elapsed timer */
+  .elapsed-timer {
+    font-size: 12px; color: var(--text-dim); margin-left: 10px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   }
 
   /* Setup wizard */
@@ -183,6 +190,25 @@
     background: rgba(34,197,94,0.15); color: var(--success);
     font-size: 11px; margin-left: 8px;
   }
+
+  /* Support panel */
+  .support-panel {
+    display: none; position: fixed; bottom: 44px; right: 24px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 20px;
+    font-size: 13px; line-height: 1.8; z-index: 50;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  .support-panel.show { display: block; }
+  .support-panel strong { display: block; margin-bottom: 4px; font-size: 14px; }
+
+  /* Schedule info box */
+  .schedule-info {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 14px; font-size: 12px;
+    color: var(--text-dim); line-height: 1.7; margin-top: 12px;
+  }
+  .schedule-info strong { color: var(--text); display: block; margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -210,6 +236,9 @@
         <div class="step-dot" id="dot-1"></div>
         <div class="step-dot" id="dot-2"></div>
         <div class="step-dot" id="dot-3"></div>
+        <div class="step-dot" id="dot-4"></div>
+        <div class="step-dot" id="dot-5"></div>
+        <div class="step-dot" id="dot-6"></div>
       </div>
 
       <!-- Step 0: Browser -->
@@ -224,7 +253,7 @@
         <div class="field" id="profile-field" style="display:none;">
           <label>Browser Profile</label>
           <select id="setup-profile"></select>
-          <div class="hint">If unsure, leave as "Default" — it usually works.</div>
+          <div class="hint">If unsure, leave as "Default" -- it usually works.</div>
         </div>
         <div class="step-actions">
           <div></div>
@@ -241,7 +270,7 @@
             <input type="text" id="setup-subdomain" placeholder="yourcompany" value="catom" style="border-radius:0; border-left:none; border-right:none; text-align:center; max-width:160px;">
             <span style="padding:10px 14px 10px 0; background:var(--surface); border:1px solid var(--border); border-left:none; border-radius:0 8px 8px 0; color:var(--text-dim); font-size:14px; white-space:nowrap;">.axoneta.io</span>
           </div>
-          <div class="hint">Just the part before ".axoneta.io" — for example, if your URL is catom.axoneta.io, type "catom"</div>
+          <div class="hint">Just the part before ".axoneta.io" -- for example, if your URL is catom.axoneta.io, type "catom"</div>
           <input type="hidden" id="setup-url">
         </div>
         <div class="field">
@@ -276,8 +305,84 @@
         </div>
       </div>
 
-      <!-- Step 3: Confirm -->
+      <!-- Step 3: Destination folder -->
       <div class="step" id="step-3">
+        <div class="field">
+          <label>Where should reports be saved?</label>
+          <div class="field-row">
+            <div class="field" style="margin-bottom:0">
+              <input type="text" id="setup-download-dir" placeholder="Loading default..." readonly>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="browseSetupFolder('setup-download-dir')" style="margin-bottom:0">Browse</button>
+            <button class="btn btn-secondary btn-sm" onclick="createSetupFolder()" style="margin-bottom:0">Create Folder</button>
+          </div>
+          <div class="hint">This is where downloaded Axon reports and your generated Ryan report will be saved.</div>
+        </div>
+        <div class="step-actions">
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 4: Anthropic API Key (optional) -->
+      <div class="step" id="step-4">
+        <div class="field">
+          <label>Anthropic API Key</label>
+          <input type="password" id="setup-api-key" placeholder="sk-ant-...">
+          <div class="hint">Paste your Anthropic API key to enable the "Get Help" button. Get one at console.anthropic.com. You can skip this and add it later in Settings.</div>
+        </div>
+        <div class="step-actions">
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <button class="btn btn-secondary" onclick="nextStep()">Skip</button>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 5: Schedule (optional) -->
+      <div class="step" id="step-5">
+        <div class="field">
+          <label>
+            <input type="checkbox" id="setup-schedule-enabled" style="width:auto; margin-right:8px;" onchange="document.getElementById('setup-schedule-options').style.display = this.checked ? 'block' : 'none';">
+            Run reports on a schedule
+          </label>
+        </div>
+        <div id="setup-schedule-options" style="display:none;">
+          <div class="field-row">
+            <div class="field">
+              <label>Day</label>
+              <select id="setup-schedule-day">
+                <option value="daily">Every day</option>
+                <option value="monday">Monday</option>
+                <option value="tuesday">Tuesday</option>
+                <option value="wednesday">Wednesday</option>
+                <option value="thursday">Thursday</option>
+                <option value="friday">Friday</option>
+                <option value="saturday" selected>Saturday</option>
+                <option value="sunday">Sunday</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Time</label>
+              <input type="time" id="setup-schedule-time" value="12:05" style="font-family:inherit;">
+            </div>
+          </div>
+        </div>
+        <div class="schedule-info">
+          <strong>How scheduling works:</strong>
+          - Your computer must be ON (not sleeping)<br>
+          - The app does NOT need to be open<br>
+          - Works even when screen is locked or screen saver is running<br>
+          - Pro tip: Set the schedule for right after something you do daily -- like 12:05 PM if you go to lunch at noon, or 5:05 PM when you leave for the day.
+        </div>
+        <div class="step-actions">
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <button class="btn btn-secondary" onclick="nextStep()">Skip</button>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 6: Confirm -->
+      <div class="step" id="step-6">
         <div style="text-align:center; padding: 16px 0 8px;">
           <div style="font-size: 40px; margin-bottom: 12px;">&#10003;</div>
           <p style="font-size: 15px; margin-bottom: 20px;">Everything looks good. Your settings will be saved.</p>
@@ -425,7 +530,7 @@
         <div class="field">
           <label>Airtable Personal Access Token</label>
           <input type="password" id="cfg-airtable-token" placeholder="pat...">
-          <div class="hint">Create one at airtable.com/create/tokens — needs data read/write scope</div>
+          <div class="hint">Create one at airtable.com/create/tokens -- needs data read/write scope</div>
         </div>
         <div class="field">
           <label>Airtable Table URL</label>
@@ -440,7 +545,16 @@
       <div class="field">
         <label>Anthropic API Key</label>
         <input type="password" id="cfg-api-key" placeholder="sk-ant-...">
-        <div class="hint">Enables the "Get Help" button — Claude will diagnose errors for you. Get a key at console.anthropic.com</div>
+        <div class="hint">Enables the "Get Help" button -- Claude will diagnose errors for you. Get a key at console.anthropic.com</div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Hours Saved</h3>
+      <div class="field">
+        <label>Total hours saved by automation: <strong id="cfg-hours-saved-display">0</strong></label>
+        <div class="hint" style="margin-bottom:8px;">Each successful run saves approximately 3 hours of manual work.</div>
+        <button class="btn btn-secondary btn-sm" onclick="resetHoursSaved()">Reset Counter</button>
       </div>
     </div>
   </div>
@@ -467,25 +581,67 @@
   </div>
 </div>
 
+<!-- Support panel -->
+<div class="support-panel" id="support-panel">
+  <strong>Contact Support:</strong>
+  Sammy Taggett -- Evolved AI<br>
+  sammy@evolvedpodcasting.com<br>
+  (303) 981-3142
+</div>
+
 <div class="status-bar">
   <span>
     <span class="status-dot idle" id="status-dot"></span>
     <span id="status-text">Idle</span>
+    <span class="elapsed-timer" id="elapsed-timer" style="display:none;"></span>
   </span>
-  <a onclick="openOutput()">Open output folder</a>
+  <span>
+    &copy; 2026 Evolved AI. All rights reserved.
+    | <a onclick="toggleSupport()">Support</a>
+    | <a onclick="openOutput()">Open output folder</a>
+  </span>
 </div>
 
 <script>
   const logEl = document.getElementById('log');
   const dot = document.getElementById('status-dot');
   const statusText = document.getElementById('status-text');
+  const elapsedTimerEl = document.getElementById('elapsed-timer');
   let pollTimer = null;
+  let elapsedTimer = null;
+  let elapsedSeconds = 0;
   let started = false;
   let currentStep = 0;
+  const TOTAL_STEPS = 7;
   let detectedBrowsers = [];
 
   // ============================================================
-  // INIT — check if configured, show setup or run page
+  // ELAPSED TIMER
+  // ============================================================
+  function startElapsedTimer() {
+    elapsedSeconds = 0;
+    elapsedTimerEl.style.display = 'inline';
+    elapsedTimerEl.textContent = '0:00';
+    elapsedTimer = setInterval(() => {
+      elapsedSeconds++;
+      const mins = Math.floor(elapsedSeconds / 60);
+      const secs = String(elapsedSeconds % 60).padStart(2, '0');
+      elapsedTimerEl.textContent = mins + ':' + secs;
+    }, 1000);
+  }
+  function stopElapsedTimer() {
+    if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+  }
+
+  // ============================================================
+  // SUPPORT PANEL
+  // ============================================================
+  function toggleSupport() {
+    document.getElementById('support-panel').classList.toggle('show');
+  }
+
+  // ============================================================
+  // INIT -- check if configured, show setup or run page
   // ============================================================
   async function init() {
     const configured = await window.pywebview.api.is_configured();
@@ -495,6 +651,9 @@
     } else {
       showPage('setup');
       await loadBrowsers();
+      // Pre-fill the default download dir for step 3
+      const defaultDir = await window.pywebview.api.get_default_download_dir();
+      document.getElementById('setup-download-dir').value = defaultDir;
     }
   }
 
@@ -506,14 +665,26 @@
     const sel = document.getElementById('setup-browser');
     sel.innerHTML = '';
     if (detectedBrowsers.length === 0) {
-      sel.innerHTML = '<option value="">No browsers found — enter path manually</option>';
+      sel.innerHTML = '<option value="">No browsers found -- enter path manually</option>';
       document.getElementById('browser-hint').textContent = 'No Chromium browsers detected.';
     } else {
-      for (const b of detectedBrowsers) {
+      // Find Chrome for auto-selection (recommended)
+      let chromeIdx = -1;
+      for (let i = 0; i < detectedBrowsers.length; i++) {
+        const b = detectedBrowsers[i];
         const opt = document.createElement('option');
         opt.value = b.path;
-        opt.textContent = b.name;
+        if (b.name.toLowerCase().indexOf('chrome') !== -1) {
+          opt.textContent = b.name + ' (Recommended)';
+          chromeIdx = i;
+        } else {
+          opt.textContent = b.name;
+        }
         sel.appendChild(opt);
+      }
+      // Auto-select Chrome if found, otherwise first browser
+      if (chromeIdx >= 0) {
+        sel.selectedIndex = chromeIdx;
       }
       document.getElementById('browser-hint').innerHTML =
         detectedBrowsers.length + ' browser(s) found <span class="detected">auto-detected</span>';
@@ -539,7 +710,7 @@
   }
 
   function updateStepDots() {
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < TOTAL_STEPS; i++) {
       const d = document.getElementById('dot-' + i);
       d.className = 'step-dot' + (i === currentStep ? ' active' : (i < currentStep ? ' done' : ''));
     }
@@ -551,17 +722,28 @@
     currentStep = n;
     updateStepDots();
 
-    const titles = ['Select Your Browser', 'Axon Login', 'Your Ryan Spreadsheet', 'Ready to Go'];
+    const titles = [
+      'Select Your Browser',
+      'Axon Login',
+      'Your Ryan Spreadsheet',
+      'Destination Folder',
+      'AI Troubleshooting (Optional)',
+      'Run Automatically?',
+      'Ready to Go'
+    ];
     const subtitles = [
       'We\'ll use this to download reports from Axon.',
       'Enter your Axon TMS credentials.',
       'Point us to your existing Ryan Moves file (optional).',
+      'Choose where reports get saved.',
+      'Enable AI-powered help for troubleshooting.',
+      'Set up automatic report generation.',
       'Review your settings and start using the app.'
     ];
     document.getElementById('setup-title').textContent = titles[n];
     document.getElementById('setup-subtitle').textContent = subtitles[n];
 
-    if (n === 3) buildSummary();
+    if (n === TOTAL_STEPS - 1) buildSummary();
   }
 
   function nextStep() {
@@ -570,25 +752,49 @@
       const sub = document.getElementById('setup-subdomain').value.trim().toLowerCase();
       document.getElementById('setup-url').value = sub ? 'https://' + sub + '.axoneta.io/' : '';
     }
-    if (currentStep < 3) showStep(currentStep + 1);
+    if (currentStep < TOTAL_STEPS - 1) showStep(currentStep + 1);
   }
   function prevStep() { if (currentStep > 0) showStep(currentStep - 1); }
+
+  async function browseSetupFolder(inputId) {
+    const path = await window.pywebview.api.pick_folder();
+    if (path) document.getElementById(inputId).value = path;
+  }
+
+  async function createSetupFolder() {
+    const dir = document.getElementById('setup-download-dir').value;
+    if (dir) {
+      await window.pywebview.api.ensure_folder(dir);
+      document.getElementById('setup-download-dir').value = dir;
+    }
+  }
 
   function buildSummary() {
     const browser = detectedBrowsers.find(b => b.path === document.getElementById('setup-browser').value);
     const sub = document.getElementById('setup-subdomain').value.trim();
     const url = sub ? 'https://' + sub + '.axoneta.io/' : '(not set)';
     const user = document.getElementById('setup-username').value || '(not set)';
-    const hist = document.getElementById('setup-historical').value || '(none — will start fresh)';
+    const hist = document.getElementById('setup-historical').value || '(none -- will start fresh)';
     const bname = browser ? browser.name : '(not set)';
+    const dlDir = document.getElementById('setup-download-dir').value || '(default)';
+    const apiKey = document.getElementById('setup-api-key').value ? 'Configured' : 'Not set';
+    const schedEnabled = document.getElementById('setup-schedule-enabled').checked;
+    let schedText = 'Off';
+    if (schedEnabled) {
+      const day = document.getElementById('setup-schedule-day').value;
+      const time = document.getElementById('setup-schedule-time').value;
+      schedText = day.charAt(0).toUpperCase() + day.slice(1) + ' at ' + time;
+    }
 
-    document.getElementById('setup-summary').innerHTML = `
-      <div><strong>Browser:</strong> ${bname}</div>
-      <div><strong>Axon URL:</strong> ${url}</div>
-      <div><strong>Username:</strong> ${user}</div>
-      <div><strong>Password:</strong> ${'*'.repeat(document.getElementById('setup-password').value.length || 0) || '(not set)'}</div>
-      <div><strong>Ryan Moves file:</strong> ${hist}</div>
-    `;
+    document.getElementById('setup-summary').innerHTML =
+      '<div><strong>Browser:</strong> ' + bname + '</div>' +
+      '<div><strong>Axon URL:</strong> ' + url + '</div>' +
+      '<div><strong>Username:</strong> ' + user + '</div>' +
+      '<div><strong>Password:</strong> ' + '*'.repeat(document.getElementById('setup-password').value.length || 0) + '</div>' +
+      '<div><strong>Ryan Moves file:</strong> ' + hist + '</div>' +
+      '<div><strong>Report folder:</strong> ' + dlDir + '</div>' +
+      '<div><strong>API Key:</strong> ' + apiKey + '</div>' +
+      '<div><strong>Schedule:</strong> ' + schedText + '</div>';
   }
 
   async function browseSetupFile(inputId) {
@@ -599,7 +805,7 @@
   async function finishSetup() {
     const browser = detectedBrowsers.find(b => b.path === document.getElementById('setup-browser').value);
     const profile = document.getElementById('setup-profile').value || 'Default';
-    const dlDir = await window.pywebview.api.get_default_download_dir();
+    const dlDir = document.getElementById('setup-download-dir').value || await window.pywebview.api.get_default_download_dir();
 
     const cfg = {
       browser: {
@@ -617,6 +823,7 @@
       },
       downloads: { directory: dlDir },
       historical_ryan: document.getElementById('setup-historical').value,
+      anthropic_api_key: document.getElementById('setup-api-key').value || '',
       reports: [
         {
           enabled: true, name: "new_ryan",
@@ -651,6 +858,17 @@
     };
 
     await window.pywebview.api.save_config(cfg);
+
+    // Handle schedule from wizard
+    const schedEnabled = document.getElementById('setup-schedule-enabled').checked;
+    if (schedEnabled) {
+      const schedDay = document.getElementById('setup-schedule-day').value;
+      const schedTime = document.getElementById('setup-schedule-time').value.split(':');
+      const schedHour = parseInt(schedTime[0] || '12');
+      const schedMin = parseInt(schedTime[1] || '5');
+      await window.pywebview.api.set_schedule(schedEnabled, schedDay, schedHour, schedMin);
+    }
+
     document.getElementById('nav-tabs').style.display = 'flex';
     showPage('run');
   }
@@ -682,6 +900,10 @@
     document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
     document.getElementById('cfg-api-key').value = cfg?.anthropic_api_key || '';
 
+    // Hours saved
+    const hoursSaved = await window.pywebview.api.get_hours_saved();
+    document.getElementById('cfg-hours-saved-display').textContent = hoursSaved.toFixed(1);
+
     // Airtable
     const at = cfg?.airtable || {};
     document.getElementById('cfg-airtable-enabled').checked = !!at.enabled;
@@ -703,7 +925,16 @@
     document.getElementById('cfg-schedule-day').value = sched.day || 'saturday';
     const h = String(sched.hour ?? 3).padStart(2, '0');
     const m = String(sched.minute ?? 0).padStart(2, '0');
-    document.getElementById('cfg-schedule-time').value = `${h}:${m}`;
+    document.getElementById('cfg-schedule-time').value = h + ':' + m;
+  }
+
+  async function resetHoursSaved() {
+    await window.pywebview.api.reset_hours_saved();
+    document.getElementById('cfg-hours-saved-display').textContent = '0.0';
+    const msg = document.getElementById('saved-msg');
+    msg.textContent = 'Hours saved counter reset';
+    msg.classList.add('show');
+    setTimeout(() => msg.classList.remove('show'), 3000);
   }
 
   // Toggle visibility
@@ -724,9 +955,9 @@
     container.innerHTML = '';
     for (const col of ALL_COLUMNS) {
       const checked = selected.includes(col) ? 'checked' : '';
-      container.innerHTML += `<label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">
-        <input type="checkbox" class="col-check" value="${col}" ${checked} style="width:auto;"> ${col}
-      </label>`;
+      container.innerHTML += '<label style="font-size:13px; display:flex; align-items:center; gap:6px; cursor:pointer;">' +
+        '<input type="checkbox" class="col-check" value="' + col + '" ' + checked + ' style="width:auto;"> ' + col +
+        '</label>';
     }
   }
 
@@ -742,15 +973,15 @@
       container.innerHTML = '<div class="hint">No reports configured.</div>';
       return;
     }
-    container.innerHTML = reports.map(r => `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">
-        <label style="font-size:13px; display:flex; align-items:center; gap:8px; cursor:pointer;">
-          <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleReport('${r.name}', this.checked)" style="width:auto;">
-          ${r.name}
-        </label>
-        <button class="btn btn-secondary btn-sm" onclick="removeReport('${r.name}')" style="padding:3px 10px; font-size:11px;">Remove</button>
-      </div>
-    `).join('');
+    container.innerHTML = reports.map(r =>
+      '<div style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">' +
+        '<label style="font-size:13px; display:flex; align-items:center; gap:8px; cursor:pointer;">' +
+          '<input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleReport(\'' + r.name + '\', this.checked)" style="width:auto;"> ' +
+          r.name +
+        '</label>' +
+        '<button class="btn btn-secondary btn-sm" onclick="removeReport(\'' + r.name + '\')" style="padding:3px 10px; font-size:11px;">Remove</button>' +
+      '</div>'
+    ).join('');
   }
 
   async function toggleReport(name, enabled) {
@@ -809,7 +1040,7 @@
     const schedResult = await window.pywebview.api.set_schedule(schedEnabled, schedDay, schedHour, schedMin);
 
     const msg = document.getElementById('saved-msg');
-    msg.textContent = schedEnabled ? 'Settings saved — ' + schedResult : 'Settings saved';
+    msg.textContent = schedEnabled ? 'Settings saved -- ' + schedResult : 'Settings saved';
     msg.classList.add('show');
     setTimeout(() => msg.classList.remove('show'), 3000);
   }
@@ -836,10 +1067,10 @@
     document.getElementById('btn-build').disabled = disabled;
     document.getElementById('spinner-all').style.display = disabled ? 'inline-block' : 'none';
   }
-  function appendLog(line) {
+  function appendLog(line, cssClass) {
     if (!started) { logEl.innerHTML = ''; started = true; }
     const div = document.createElement('div');
-    div.className = 'log-line ' + classifyLine(line);
+    div.className = 'log-line ' + (cssClass || classifyLine(line));
     div.textContent = line;
     logEl.appendChild(div);
     logEl.scrollTop = logEl.scrollHeight;
@@ -854,23 +1085,37 @@
     return 'info';
   }
 
+  async function showCelebration() {
+    const hoursSaved = await window.pywebview.api.get_hours_saved();
+    appendLog('', 'dim');
+    appendLog('\u2713 SUCCESSFUL! Done.', 'celebrate');
+    appendLog('You just saved ~3 hours this week.', 'celebrate');
+    appendLog('That\'s ' + hoursSaved.toFixed(1) + ' total hours saved so far.', 'celebrate');
+    appendLog('What else are you doing manually that we can take off your plate with automation?', 'celebrate');
+  }
+
   async function runPipeline(mode) {
     showPage('run');
     setButtons(true);
     setStatus('running', 'Running...');
     started = false;
     logEl.innerHTML = '<div class="log-empty">Starting pipeline...</div>';
+    startElapsedTimer();
     const result = await window.pywebview.api.run_pipeline(mode);
-    if (result === 'already running') { appendLog('[WARN] Pipeline is already running'); return; }
+    if (result === 'already running') { appendLog('[WARN] Pipeline is already running'); stopElapsedTimer(); return; }
     pollTimer = setInterval(async () => {
       const lines = await window.pywebview.api.get_logs();
       for (const line of lines) appendLog(line);
       const running = await window.pywebview.api.is_running();
       if (!running) {
         clearInterval(pollTimer);
+        stopElapsedTimer();
         setButtons(false);
         const allText = logEl.innerText || '';
-        if (allText.includes('[DONE]')) setStatus('done', 'Complete');
+        if (allText.includes('[DONE]')) {
+          setStatus('done', 'Complete');
+          await showCelebration();
+        }
         else if (allText.includes('[ERROR]')) setStatus('error', 'Failed');
         else setStatus('idle', 'Idle');
       }

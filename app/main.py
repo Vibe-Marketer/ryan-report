@@ -1,4 +1,4 @@
-"""Ryan Report — Desktop App
+"""Ryan Report -- Desktop App
 
 A simple desktop UI for running the Ryan report pipeline.
 Double-click to launch, click a button to run.
@@ -18,7 +18,7 @@ import webview
 
 
 # ---------------------------------------------------------------------------
-# Path resolution — works both in dev and when frozen by PyInstaller.
+# Path resolution -- works both in dev and when frozen by PyInstaller.
 # ---------------------------------------------------------------------------
 
 def _app_root() -> Path:
@@ -79,7 +79,7 @@ def _remove_legacy_bundled_configs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline API — exposed to the webview JS layer.
+# Pipeline API -- exposed to the webview JS layer.
 # ---------------------------------------------------------------------------
 
 class PipelineAPI:
@@ -189,7 +189,7 @@ class PipelineAPI:
 
         historical = cfg.get("historical_ryan", "")
         if not historical:
-            warnings.append("Historical Ryan CSV is not set — all orders will be treated as new.")
+            warnings.append("Historical Ryan CSV is not set -- all orders will be treated as new.")
         elif not Path(historical).exists():
             errors.append(f"Historical Ryan CSV does not exist: {historical}")
 
@@ -308,7 +308,7 @@ class PipelineAPI:
     def get_default_download_dir(self) -> str:
         return str(Path.home() / "Downloads" / "ryan-moves-and-tests")
 
-    # -- File browser --
+    # -- File/folder browser --
 
     def pick_folder(self) -> str | None:
         result = self._window.create_file_dialog(
@@ -327,6 +327,34 @@ class PipelineAPI:
         if result and len(result) > 0:
             return result[0]
         return None
+
+    def ensure_folder(self, path: str) -> str:
+        """Create a folder if it doesn't exist. Returns 'ok'."""
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return "ok"
+
+    # -- Hours saved tracking --
+
+    def get_hours_saved(self) -> float:
+        """Return total hours saved from config."""
+        cfg = self.load_config()
+        return float(cfg.get("hours_saved", 0))
+
+    def reset_hours_saved(self) -> str:
+        """Reset the hours saved counter to 0."""
+        cfg = self.load_config()
+        cfg["hours_saved"] = 0
+        self.save_config(cfg)
+        return "ok"
+
+    def _increment_hours_saved(self, hours: float = 3.0) -> float:
+        """Add hours to the saved counter and return new total."""
+        cfg = self.load_config()
+        current = float(cfg.get("hours_saved", 0))
+        new_total = current + hours
+        cfg["hours_saved"] = new_total
+        self.save_config(cfg)
+        return new_total
 
     # -- Pipeline execution --
 
@@ -359,7 +387,7 @@ class PipelineAPI:
             import csv as csv_mod
             from openpyxl import Workbook, load_workbook
         except ImportError:
-            self._log("[WARN] openpyxl not installed — skipping xlsx append.")
+            self._log("[WARN] openpyxl not installed -- skipping xlsx append.")
             return
 
         new_csv = Path(new_rows_csv)
@@ -376,7 +404,7 @@ class PipelineAPI:
         headers = all_rows[:2]
         data_rows = all_rows[2:]
 
-        # Determine the xlsx path — same name/location as historical but .xlsx
+        # Determine the xlsx path -- same name/location as historical but .xlsx
         hist = Path(historical_path)
         xlsx_path = hist.with_suffix(".xlsx")
 
@@ -412,7 +440,7 @@ class PipelineAPI:
             return [f"Download directory does not exist: {dl_dir}"]
 
         # Historical file is handled separately with the missing file dialog.
-        # Don't block the build here — just check for required source CSVs.
+        # Don't block the build here -- just check for required source CSVs.
         required_prefixes = ["Order Master Report", "New RYAN"]
         for prefix in required_prefixes:
             if not self._latest_matching_file(dl_dir, prefix):
@@ -481,7 +509,7 @@ class PipelineAPI:
                 self._log("[ERROR] Preflight validation failed. Fix settings and try again.")
                 return
 
-            # Import the execution modules — works in both dev and frozen modes.
+            # Import the execution modules -- works in both dev and frozen modes.
             sys.path.insert(0, str(EXECUTION.parent))
             from execution.download_reports import load_config as dl_load_config
             from execution.download_reports import (
@@ -562,7 +590,7 @@ class PipelineAPI:
                         self._log("[INFO] Build cancelled.")
                         return
                     elif result == "new":
-                        self._log("[INFO] Starting fresh — all orders will be treated as new.")
+                        self._log("[INFO] Starting fresh -- all orders will be treated as new.")
                         Path(historical).parent.mkdir(parents=True, exist_ok=True)
                         Path(historical).write_text("", encoding="utf-8")
                     else:
@@ -584,7 +612,7 @@ class PipelineAPI:
                     "--only-new-orders",
                 ]
                 try:
-                    # build_ryan_report.main() uses argparse — patch sys.argv
+                    # build_ryan_report.main() uses argparse -- patch sys.argv
                     old_argv = sys.argv
                     sys.argv = ["build_ryan_report"] + build_args
                     try:
@@ -604,6 +632,9 @@ class PipelineAPI:
                 self._append_to_xlsx(historical, fresh_output)
 
             self._log("[DONE] Pipeline complete!")
+
+            # Increment hours saved on success.
+            self._increment_hours_saved(3.0)
 
             # Clean up: delete only the source files downloaded in THIS run.
             downloaded = getattr(self, "_downloaded_files", [])
@@ -668,7 +699,7 @@ class PipelineAPI:
         base_id, table_id = self._parse_airtable_url(airtable.get("table_url", ""))
 
         if not token:
-            self._log("[WARN] No Airtable token configured — skipping push")
+            self._log("[WARN] No Airtable token configured -- skipping push")
             return
         if not base_id or not table_id:
             self._log("[ERROR] Could not parse base/table ID from Airtable URL. "
@@ -679,10 +710,10 @@ class PipelineAPI:
         dl_dir = Path(cfg.get("downloads", {}).get("directory", ""))
         report_csv = dl_dir / "generated-ryan-report-latest-new-only.csv"
         if not report_csv.exists():
-            self._log("[WARN] No generated report found — skipping Airtable push")
+            self._log("[WARN] No generated report found -- skipping Airtable push")
             return
 
-        # Parse CSV — skip the two header rows, read data rows.
+        # Parse CSV -- skip the two header rows, read data rows.
         with report_csv.open("r", encoding="utf-8-sig") as f:
             lines = list(csv_mod.reader(f))
 
@@ -763,7 +794,7 @@ class PipelineAPI:
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode()[:300]
                 if e.code == 429:
-                    self._log("[WARN] Rate limited by Airtable — waiting 30s...")
+                    self._log("[WARN] Rate limited by Airtable -- waiting 30s...")
                     time.sleep(30)
                     # Retry this batch.
                     try:
@@ -774,7 +805,7 @@ class PipelineAPI:
                         self._log(f"[ERROR] Retry failed: {e2}")
                         return
                 elif e.code == 422:
-                    # Field name mismatch — parse the error for the user.
+                    # Field name mismatch -- parse the error for the user.
                     self._log(f"[ERROR] Airtable rejected the data (422). This usually means "
                               f"your Airtable table field names don't match exactly.")
                     self._log(f"  Expected fields: {', '.join(selected)}")
@@ -1031,7 +1062,7 @@ class PipelineAPI:
                     "3. Try again\n\n"
                     "Common fixes:\n"
                     "- 'Profile lock' error: Close your browser, reopen it, try again\n"
-                    "- 'element not found' error: The Axon page layout may have changed — contact support\n"
+                    "- 'element not found' error: The Axon page layout may have changed -- contact support\n"
                     "- 'Download failed' error: Make sure you're logged into Axon in your browser\n"
                     "- 'FileNotFoundError': Check that your Ryan Moves CSV path is correct in Settings"
                 )
@@ -1076,6 +1107,12 @@ class PipelineAPI:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    # --run-scheduled: headless mode for cron/launchd/Task Scheduler.
+    if "--run-scheduled" in sys.argv:
+        api = PipelineAPI()
+        api._run("all")
+        sys.exit(0)
+
     api = PipelineAPI()
     window = webview.create_window(
         "Catom",
