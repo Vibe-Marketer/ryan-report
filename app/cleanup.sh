@@ -4,9 +4,8 @@
 
 echo "Cleaning up all previous Catom installations..."
 
-# Kill any running instances
+# Kill Catom only (NEVER touch the user's Chrome)
 killall Catom 2>/dev/null
-killall "Google Chrome" 2>/dev/null
 sleep 1
 
 # Remove app from Applications

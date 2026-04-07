@@ -161,10 +161,8 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
         print(f"[INFO] Chrome requires a dedicated profile for automation.")
         print(f"[INFO] Using: {user_data}")
 
-    if exe and _is_browser_running(exe):
-        print("[INFO] Browser is running without CDP. Relaunching with CDP enabled...")
-        _stop_browser_process(exe)
-        time.sleep(3)
+    # NEVER kill the user's existing Chrome. We launch a separate instance
+    # with our own --user-data-dir which runs alongside their Chrome.
 
     launch_args = [
         exe,
