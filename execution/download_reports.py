@@ -217,15 +217,11 @@ def _detect_2fa_prompt(page: Page) -> bool:
     return any(ind in content for ind in indicators)
 
 
-# Global callback for requesting a 2FA code from the UI.
-# Set by the desktop app before running the pipeline.
-_twofa_callback: Any = None
-
-
-def set_twofa_callback(fn: Any) -> None:
-    """Register a callback that returns a 2FA code string from the user."""
-    global _twofa_callback
-    _twofa_callback = fn
+def _on_dashboard(page: Page) -> bool:
+    return (
+        page.locator("text=Trucking").count() > 0
+        or page.locator("text=Catom Trucking Inc").count() > 0
+    )
 
 
 def maybe_login(page: Page, config: dict[str, Any]) -> None:
@@ -235,86 +231,46 @@ def maybe_login(page: Page, config: dict[str, Any]) -> None:
         page.goto(auth["base_url"], wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
-    # Wait for the page to fully render (headless can be slower).
     page.wait_for_timeout(2000)
 
     if page.locator("text=User Name").count() == 0:
         return
 
-    username = auth.get("username", "")
-    password = auth.get("password", "")
+    username = auth.get("username", "").strip()
+    password = auth.get("password", "").strip()
     if username and password:
-        # Axon's login fields may start as disabled/hidden in headless.
-        # Use JS to force them visible and enabled before filling.
+        # Axon's login fields may start as disabled/readonly.
+        # Use JS to force them editable before filling.
         page.evaluate("""() => {
             const user = document.getElementById('user');
             const pass = document.getElementById('password');
-            if (user) { user.disabled = false; user.style.display = ''; user.style.visibility = 'visible'; }
-            if (pass) { pass.disabled = false; pass.readOnly = false; pass.style.display = ''; pass.style.visibility = 'visible'; }
+            if (user) { user.disabled = false; user.readOnly = false; user.value = ''; }
+            if (pass) { pass.disabled = false; pass.readOnly = false; pass.value = ''; }
         }""")
         page.wait_for_timeout(500)
         page.locator("#user").fill(username)
+        page.wait_for_timeout(300)
         page.locator("#password").fill(password)
+        page.wait_for_timeout(300)
         page.locator("input[type='submit'][value='Login']").click()
         page.wait_for_timeout(5000)
 
-    # If we're not on the dashboard yet, check for 2FA or other prompts.
-    # Rather than guessing page content keywords, if login didn't land us
-    # on the dashboard and we have a 2FA callback, prompt the user.
-    if (
-        page.locator("text=Trucking").count() == 0
-        and page.locator("text=Catom Trucking Inc").count() == 0
-    ):
-        # Not on dashboard — could be 2FA, wrong password, or loading.
-        if _twofa_callback:
-            print("[INFO] Login did not reach dashboard — requesting verification code.")
-            code = _twofa_callback()
-            if code:
-                # Find any text/number input that isn't the login fields.
-                page.wait_for_timeout(1000)
-                filled = False
-                for selector in [
-                    "input[name*='code']", "input[name*='otp']",
-                    "input[name*='token']", "input[name*='verify']",
-                    "input[type='tel']", "input[type='number']",
-                    "input[type='text']:not(#user):not(#password)",
-                ]:
-                    field = page.locator(selector).first
-                    if field.count() > 0:
-                        field.fill(code)
-                        filled = True
-                        break
-                if not filled:
-                    # Last resort: try filling any visible input on the page.
-                    page.evaluate(f"""() => {{
-                        const inputs = document.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"]');
-                        for (const inp of inputs) {{
-                            if (inp.id !== 'user' && inp.id !== 'password' && inp.offsetParent !== null) {{
-                                inp.value = {json.dumps(code)};
-                                inp.dispatchEvent(new Event('input', {{bubbles: true}}));
-                                return;
-                            }}
-                        }}
-                    }}""")
-                # Submit the code by pressing Enter.
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(5000)
+    if _on_dashboard(page):
+        return
 
-    # Wait for dashboard to appear.
-    if (
-        page.locator("text=Trucking").count() == 0
-        and page.locator("text=Catom Trucking Inc").count() == 0
-    ):
-        timeout_seconds = int(auth.get("manual_login_timeout_seconds", 180))
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            page.wait_for_timeout(1000)
-            if (
-                page.locator("text=Trucking").count()
-                or page.locator("text=Catom Trucking Inc").count()
-            ):
-                return
-        raise RuntimeError("Browser is not logged in.")
+    # Not on dashboard — likely 2FA or verification code needed.
+    # The browser is visible. Tell the user to enter the code there.
+    print("[INFO] A verification code may be required.")
+    print("[INFO] Check your email for the code and enter it in the browser window.")
+    print("[INFO] Waiting up to 3 minutes for you to complete login...")
+
+    timeout_seconds = int(auth.get("manual_login_timeout_seconds", 180))
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        page.wait_for_timeout(2000)
+        if _on_dashboard(page):
+            return
+    raise RuntimeError("Browser is not logged in. Check your credentials and try again.")
 
 
 # ---------------------------------------------------------------------------

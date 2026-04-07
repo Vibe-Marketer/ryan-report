@@ -515,11 +515,7 @@ class PipelineAPI:
                 launch_context,
                 maybe_login,
                 run_report,
-                set_twofa_callback,
             )
-
-            # Register the 2FA callback so the download code can prompt the UI.
-            set_twofa_callback(self._request_twofa_code)
 
             if mode in ("all", "download"):
                 self._log("[1/2] Downloading reports from Axon...")
