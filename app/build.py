@@ -74,6 +74,9 @@ def _make_pkg_scripts_dir() -> Path:
         'rm -rf "$USER_HOME/.Trash/Catom.app" 2>/dev/null || true\n'
         'rm -rf "$USER_HOME/.Trash/Catom "*.app 2>/dev/null || true\n'
         '\n'
+        '# Refresh Spotlight so stale Catom entries disappear.\n'
+        'mdimport -d1 /Applications 2>/dev/null || true\n'
+        '\n'
         'exit 0\n',
         encoding="utf-8",
     )
