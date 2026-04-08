@@ -527,7 +527,7 @@ class PipelineAPI:
                     downloads_dir.mkdir(parents=True, exist_ok=True)
 
                     self._log("[INFO] Connecting to browser...")
-                    context, we_launched = launch_context(dl_cfg)
+                    context, launched_pid = launch_context(dl_cfg)
                     self._log("[INFO] Browser connected")
 
                     try:
@@ -552,28 +552,15 @@ class PipelineAPI:
                                 if mode == "download":
                                     return
                     finally:
-                        if we_launched:
+                        if launched_pid:
                             try:
-                                # Close the Playwright connection AND quit the
-                                # Chrome instance we launched.
-                                browser_obj = context.browser
                                 context.close()
-                                if browser_obj:
-                                    browser_obj.close()
                             except Exception:
                                 pass
-                            # Kill the Chrome process we spawned (by CDP port).
+                            # Kill ONLY the Chrome we spawned, by its exact PID.
                             try:
-                                import subprocess as _sp
-                                if platform.system() == "Darwin":
-                                    _sp.run(["lsof", "-ti", ":9224"], capture_output=True, text=True)
-                                    result = _sp.run(["lsof", "-ti", ":9224"], capture_output=True, text=True)
-                                    for pid in result.stdout.strip().split("\n"):
-                                        if pid:
-                                            _sp.run(["kill", pid], capture_output=True)
-                                elif platform.system() == "Windows":
-                                    _sp.run(["netstat", "-ano"], capture_output=True)  # TODO: parse PID
-                            except Exception:
+                                os.kill(launched_pid, 15)  # SIGTERM
+                            except (OSError, ProcessLookupError):
                                 pass
 
                 except Exception as exc:

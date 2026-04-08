@@ -147,7 +147,7 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     ]
     print("[INFO] Launching browser...")
 
-    subprocess.Popen(launch_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _launched_process = subprocess.Popen(launch_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     for _ in range(30):
         time.sleep(1)
@@ -156,7 +156,7 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
             context = browser.contexts[0]
             context.set_default_timeout(15000)
             print(f"[INFO] Launched browser with CDP on port {CDP_PORT}")
-            return context, True
+            return context, _launched_process.pid
         except Exception:
             continue
 
