@@ -603,12 +603,17 @@ class PipelineAPI:
                 append_output = str(Path(dl_dir) / "append-ryan-report-latest.csv")
 
                 from execution.build_ryan_report import main as build_main
+                # State dir must be in user space (app bundle is read-only).
+                user_state = str(_user_config_dir() / "state")
+                Path(user_state).mkdir(parents=True, exist_ok=True)
+
                 build_args = [
                     "--input-dir", dl_dir,
                     "--output", fresh_output,
                     "--append-to", historical,
                     "--append-output", append_output,
                     "--historical-ryan", historical,
+                    "--state-dir", user_state,
                     "--only-new-orders",
                 ]
                 try:

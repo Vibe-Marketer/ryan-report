@@ -489,10 +489,14 @@ def main() -> None:
     parser.add_argument("--order-master")
     parser.add_argument("--new-ryan")
     parser.add_argument("--historical-ryan")
+    parser.add_argument("--state-dir")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
-    state_dir = Path(__file__).resolve().parents[1] / "state"
+    if args.state_dir:
+        state_dir = Path(args.state_dir)
+    else:
+        state_dir = Path(__file__).resolve().parents[1] / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
 
     order_master_path = (
