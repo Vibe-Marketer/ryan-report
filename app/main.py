@@ -537,6 +537,18 @@ class PipelineAPI:
                         maybe_login(page, dl_cfg)
                         self._log("[INFO] Logged in to Axon")
 
+                        # Minimize Chrome now that login is done.
+                        try:
+                            cdp = context.browser.new_browser_cdp_session()
+                            cdp.send("Browser.getWindowForTarget")
+                            window = cdp.send("Browser.getWindowForTarget")
+                            cdp.send("Browser.setWindowBounds", {
+                                "windowId": window["windowId"],
+                                "bounds": {"windowState": "minimized"}
+                            })
+                        except Exception:
+                            pass
+
                         self._downloaded_files: list[Path] = []
                         for report in dl_cfg["reports"]:
                             if report.get("enabled", True) is False:
