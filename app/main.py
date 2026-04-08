@@ -554,7 +554,25 @@ class PipelineAPI:
                     finally:
                         if we_launched:
                             try:
+                                # Close the Playwright connection AND quit the
+                                # Chrome instance we launched.
+                                browser_obj = context.browser
                                 context.close()
+                                if browser_obj:
+                                    browser_obj.close()
+                            except Exception:
+                                pass
+                            # Kill the Chrome process we spawned (by CDP port).
+                            try:
+                                import subprocess as _sp
+                                if platform.system() == "Darwin":
+                                    _sp.run(["lsof", "-ti", ":9224"], capture_output=True, text=True)
+                                    result = _sp.run(["lsof", "-ti", ":9224"], capture_output=True, text=True)
+                                    for pid in result.stdout.strip().split("\n"):
+                                        if pid:
+                                            _sp.run(["kill", pid], capture_output=True)
+                                elif platform.system() == "Windows":
+                                    _sp.run(["netstat", "-ano"], capture_output=True)  # TODO: parse PID
                             except Exception:
                                 pass
 
