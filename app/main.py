@@ -191,7 +191,7 @@ class PipelineAPI:
         if not historical:
             warnings.append("Historical Ryan CSV is not set -- all orders will be treated as new.")
         elif not Path(historical).exists():
-            errors.append(f"Historical Ryan CSV does not exist: {historical}")
+            warnings.append(f"Historical Ryan file not found: {historical} -- you'll be asked to locate it.")
 
         reports = [r for r in cfg.get("reports", []) if r.get("enabled", True)]
         if not reports:
