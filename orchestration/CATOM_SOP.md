@@ -41,9 +41,11 @@ The app will show which browsers it found on your computer (Chrome, Comet, or Ch
 - **Username** -- your Axon login username.
 - **Password** -- your Axon login password.
 
-### Choose Your Historical Ryan CSV
+### Choose Your Historical Ryan Moves File
 
-Click the file picker and select your current Ryan moves CSV file. This is the file the app uses to find new moves and build the updated report.
+Click Browse and select your existing Ryan Moves file. This can be either a **.xlsx** or **.csv** file (for example, `2026 RYAN MOVES.xlsx`).
+
+Important: This must be your **original Ryan Moves file** -- the one you have been maintaining with all previous moves. Do NOT select one of the downloaded Axon reports. If you are starting fresh and do not have one yet, skip this step and the app will create one for you.
 
 ---
 

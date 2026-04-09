@@ -189,7 +189,7 @@ class PipelineAPI:
 
         historical = cfg.get("historical_ryan", "")
         if not historical:
-            warnings.append("Historical Ryan CSV is not set -- all orders will be treated as new.")
+            warnings.append("Historical Ryan file is not set -- all orders will be treated as new.")
         elif not Path(historical).exists():
             warnings.append(f"Historical Ryan file not found: {historical} -- you'll be asked to locate it.")
 
@@ -600,7 +600,16 @@ class PipelineAPI:
                 dl_dir = cfg.get("downloads", {}).get("directory", "")
                 if not dl_dir:
                     dl_dir = str(Path.home() / "Downloads" / "ryan-moves-and-tests")
-                historical = cfg.get("historical_ryan", "") or str(Path(dl_dir) / "2026 RYAN MOVES.csv")
+                # Check for xlsx first, then csv
+                historical = cfg.get("historical_ryan", "")
+                if not historical:
+                    for ext in (".xlsx", ".csv"):
+                        candidate = Path(dl_dir) / f"2026 RYAN MOVES{ext}"
+                        if candidate.exists():
+                            historical = str(candidate)
+                            break
+                    if not historical:
+                        historical = str(Path(dl_dir) / "2026 RYAN MOVES.xlsx")
                 if historical and not Path(historical).exists():
                     result = self._request_missing_file(historical)
                     if result == "cancel":
