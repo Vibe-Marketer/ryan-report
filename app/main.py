@@ -915,6 +915,134 @@ class PipelineAPI:
         self.save_config(cfg)
         return "ok"
 
+    def get_report_detail(self, name: str) -> dict | None:
+        """Return full report definition including steps."""
+        cfg = self.load_config()
+        for r in cfg.get("reports", []):
+            if r.get("name") == name:
+                return r
+        return None
+
+    def save_report(self, report: dict) -> str:
+        """Save a full report definition (create or update).
+        report must have 'name' and 'steps' keys."""
+        cfg = self.load_config()
+        reports = cfg.get("reports", [])
+        name = report.get("name", "")
+        if not name:
+            return "error: name required"
+
+        # Normalize steps
+        for step in report.get("steps", []):
+            step.setdefault("action", "click_tab")
+            step.setdefault("label", "")
+            step.setdefault("wait_ms", 1000)
+            step.setdefault("triggers_download", False)
+            # Ensure 'name' or 'text' target field exists
+            if step["action"] == "click_tab":
+                step.setdefault("name", step.get("text", ""))
+            else:
+                step.setdefault("text", step.get("name", ""))
+
+        # Update existing or append new
+        found = False
+        for i, r in enumerate(reports):
+            if r.get("name") == name:
+                report["enabled"] = r.get("enabled", True)
+                report.setdefault("version", r.get("version", 0) + 1)
+                reports[i] = report
+                found = True
+                break
+        if not found:
+            report.setdefault("enabled", True)
+            report.setdefault("version", 1)
+            reports.append(report)
+
+        cfg["reports"] = reports
+        self.save_config(cfg)
+        return "ok"
+
+    def test_run_report(self, name: str) -> str:
+        """Test-run a single report path. Runs in background thread."""
+        if self._running:
+            return "already running"
+        self._running = True
+        self._log_lines.clear()
+        t = threading.Thread(target=self._test_run, args=(name,), daemon=True)
+        t.start()
+        return "started"
+
+    def _test_run(self, name: str) -> None:
+        """Execute a single report path for testing."""
+        try:
+            config = self.get_config_path()
+            cfg = self.load_config()
+
+            report = None
+            for r in cfg.get("reports", []):
+                if r.get("name") == name:
+                    report = r
+                    break
+            if not report:
+                self._log(f"[ERROR] Report '{name}' not found.")
+                return
+
+            validation = self.validate_config()
+            for warning in validation["warnings"]:
+                self._log(f"[WARN] {warning}")
+            if validation["errors"]:
+                for error in validation["errors"]:
+                    self._log(f"[ERROR] {error}")
+                return
+
+            sys.path.insert(0, str(EXECUTION.parent))
+            from execution.download_reports import load_config as dl_load_config
+            from execution.download_reports import (
+                find_axon_page,
+                launch_context,
+                maybe_login,
+                run_report,
+            )
+
+            self._log(f"[INFO] Test-running report: {name}")
+            dl_cfg = dl_load_config(Path(config))
+            downloads_dir = Path(dl_cfg["downloads"]["directory"])
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+
+            self._log("[INFO] Connecting to browser...")
+            context, launched_pid = launch_context(dl_cfg)
+            self._log("[INFO] Browser connected")
+
+            try:
+                page = find_axon_page(context, dl_cfg["auth"]["base_url"])
+                page.set_viewport_size({"width": 1600, "height": 1000})
+                self._log("[INFO] Logging in to Axon...")
+                maybe_login(page, dl_cfg)
+                self._log("[INFO] Logged in to Axon")
+
+                self._log(f"[INFO] Running path: {name}...")
+                result = run_report(page, report, downloads_dir)
+                if result:
+                    self._log(f"[OK] Test download succeeded: {result.name}")
+                else:
+                    self._log("[OK] Test run completed (no download expected)")
+            finally:
+                if launched_pid:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                    try:
+                        os.kill(launched_pid, 15)
+                    except (OSError, ProcessLookupError):
+                        pass
+
+            self._log("[DONE] Test run complete!")
+        except Exception as e:
+            self._log(f"[ERROR] Test run failed: {e}")
+        finally:
+            self._running = False
+
     # -- Output info --
 
     def get_output_files(self) -> list[dict]:
