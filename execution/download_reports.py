@@ -349,6 +349,43 @@ def run_report(page: Page, report: dict[str, Any], downloads_dir: Path) -> Path 
     return None
 
 
+def run_single_report(
+    config: dict[str, Any],
+    report: dict[str, Any],
+    log=None,
+) -> Path | None:
+    """Launch browser, log in, run one report path, cleanup.
+
+    Single shared entry point used by both the CLI (`main`) and the desktop
+    app's test-run API, so browser lifecycle lives in one place.
+    """
+    _log = log or (lambda msg: print(msg))
+    downloads_dir = Path(config["downloads"]["directory"])
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+
+    _log("[INFO] Connecting to browser...")
+    context, launched_pid = launch_context(config)
+    _log("[INFO] Browser connected")
+    try:
+        page = find_axon_page(context, config["auth"]["base_url"])
+        page.set_viewport_size(VIEWPORT)
+        _log("[INFO] Logging in to Axon...")
+        maybe_login(page, config)
+        _log("[INFO] Logged in to Axon")
+        _log(f"[INFO] Running path: {report['name']}...")
+        return run_report(page, report, downloads_dir)
+    finally:
+        if launched_pid:
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                os.kill(launched_pid, 15)
+            except (OSError, ProcessLookupError):
+                pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Download Axon Ryan reports using a persistent browser profile."

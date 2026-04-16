@@ -973,7 +973,12 @@ class PipelineAPI:
         return "started"
 
     def _test_run(self, name: str) -> None:
-        """Execute a single report path for testing."""
+        """Execute a single report path for testing.
+
+        Delegates browser lifecycle (launch/login/cleanup) to
+        execution.download_reports.run_single_report so both the CLI and the
+        desktop app share one code path.
+        """
         try:
             config = self.get_config_path()
             cfg = self.load_config()
@@ -996,46 +1001,19 @@ class PipelineAPI:
                 return
 
             sys.path.insert(0, str(EXECUTION.parent))
-            from execution.download_reports import load_config as dl_load_config
             from execution.download_reports import (
-                find_axon_page,
-                launch_context,
-                maybe_login,
-                run_report,
+                load_config as dl_load_config,
+                run_single_report,
             )
 
             self._log(f"[INFO] Test-running report: {name}")
             dl_cfg = dl_load_config(Path(config))
-            downloads_dir = Path(dl_cfg["downloads"]["directory"])
-            downloads_dir.mkdir(parents=True, exist_ok=True)
 
-            self._log("[INFO] Connecting to browser...")
-            context, launched_pid = launch_context(dl_cfg)
-            self._log("[INFO] Browser connected")
-
-            try:
-                page = find_axon_page(context, dl_cfg["auth"]["base_url"])
-                page.set_viewport_size({"width": 1600, "height": 1000})
-                self._log("[INFO] Logging in to Axon...")
-                maybe_login(page, dl_cfg)
-                self._log("[INFO] Logged in to Axon")
-
-                self._log(f"[INFO] Running path: {name}...")
-                result = run_report(page, report, downloads_dir)
-                if result:
-                    self._log(f"[OK] Test download succeeded: {result.name}")
-                else:
-                    self._log("[OK] Test run completed (no download expected)")
-            finally:
-                if launched_pid:
-                    try:
-                        context.close()
-                    except Exception:
-                        pass
-                    try:
-                        os.kill(launched_pid, 15)
-                    except (OSError, ProcessLookupError):
-                        pass
+            result = run_single_report(dl_cfg, report, log=self._log)
+            if result:
+                self._log(f"[OK] Test download succeeded: {result.name}")
+            else:
+                self._log("[OK] Test run completed (no download expected)")
 
             self._log("[DONE] Test run complete!")
         except Exception as e:
