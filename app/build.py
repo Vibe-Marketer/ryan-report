@@ -196,7 +196,7 @@ def _fix_playwright_node(app_path: Path) -> None:
         import tarfile
         node_url = "https://nodejs.org/dist/v22.16.0/node-v22.16.0-darwin-arm64.tar.gz"
         tar_path = Path(tempfile.mkdtemp()) / "node.tar.gz"
-        print(f"  Downloading node v22 LTS for arm64...")
+        print("  Downloading node v22 LTS for arm64...")
         urllib.request.urlretrieve(node_url, tar_path)
         with tarfile.open(tar_path) as tf:
             member = tf.getmember("node-v22.16.0-darwin-arm64/bin/node")
@@ -215,7 +215,7 @@ def _fix_playwright_node(app_path: Path) -> None:
         import zipfile
         node_url = "https://nodejs.org/dist/v22.16.0/node-v22.16.0-win-x64.zip"
         zip_path = Path(tempfile.mkdtemp()) / "node.zip"
-        print(f"  Downloading node v22 LTS for Windows x64...")
+        print("  Downloading node v22 LTS for Windows x64...")
         urllib.request.urlretrieve(node_url, zip_path)
         with zipfile.ZipFile(zip_path) as zf:
             with zf.open("node-v22.16.0-win-x64/node.exe") as src:
@@ -391,10 +391,10 @@ def build(debug: bool = False) -> None:
         except subprocess.CalledProcessError as exc:
             print(f"[WARN] DMG creation failed: {exc}")
             print("[WARN] PKG is still available for install/testing.")
-        print(f"\nTo distribute:")
+        print("\nTo distribute:")
         print(f"  1. Send '{name}.dmg' or '{name}.pkg' to the client")
-        print(f"  2. DMG: drag the app to Applications")
-        print(f"  3. PKG: run installer to place app in /Applications")
+        print("  2. DMG: drag the app to Applications")
+        print("  3. PKG: run installer to place app in /Applications")
         if not identity:
             print("\n  Note: build is ad hoc signed only. Install a valid Developer ID Application")
             print("  identity and export CATOM_CODESIGN_IDENTITY to remove Gatekeeper warnings.")

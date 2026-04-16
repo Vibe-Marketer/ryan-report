@@ -819,7 +819,7 @@ class PipelineAPI:
             req = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
 
             try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
+                with urllib.request.urlopen(req, timeout=30):
                     pushed += len(batch)
                     self._log(f"  Batch {batch_num+1}: {len(batch)} records sent")
             except urllib.error.HTTPError as e:
@@ -830,19 +830,19 @@ class PipelineAPI:
                     # Retry this batch.
                     try:
                         req2 = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
-                        with urllib.request.urlopen(req2, timeout=30) as resp2:
+                        with urllib.request.urlopen(req2, timeout=30):
                             pushed += len(batch)
                     except Exception as e2:
                         self._log(f"[ERROR] Retry failed: {e2}")
                         return
                 elif e.code == 422:
                     # Field name mismatch -- parse the error for the user.
-                    self._log(f"[ERROR] Airtable rejected the data (422). This usually means "
-                              f"your Airtable table field names don't match exactly.")
+                    self._log("[ERROR] Airtable rejected the data (422). This usually means "
+                              "your Airtable table field names don't match exactly.")
                     self._log(f"  Expected fields: {', '.join(selected)}")
                     self._log(f"  Airtable says: {err_body}")
-                    self._log(f"  Fix: Make sure your Airtable table has columns with these "
-                              f"EXACT names (case-sensitive).")
+                    self._log("  Fix: Make sure your Airtable table has columns with these "
+                              "EXACT names (case-sensitive).")
                     return
                 elif e.code == 401:
                     self._log("[ERROR] Airtable token is invalid or expired. "
@@ -1094,8 +1094,6 @@ class PipelineAPI:
 
     def set_schedule(self, enabled: bool, day: str, hour: int, minute: int) -> str:
         """Set or remove the scheduled run. day: 'daily' or 'monday'-'sunday'."""
-        import subprocess
-
         cfg = self.load_config()
         cfg["schedule"] = {
             "enabled": enabled,
@@ -1172,9 +1170,8 @@ class PipelineAPI:
                        capture_output=True, check=False)
 
         if day.lower() == "daily":
-            schedule_type, day_arg = "/sc", "daily"
+            day_arg = "daily"
         else:
-            schedule_type = "/sc"
             day_arg = "weekly"
 
         cmd = [

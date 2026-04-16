@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import BrowserContext, Frame, Page, TimeoutError, sync_playwright
+from playwright.sync_api import BrowserContext, Page, TimeoutError, sync_playwright
 
 CDP_PORT = 9224  # Port for Chrome DevTools Protocol connection to a Chromium browser.
 VIEWPORT = {"width": 1600, "height": 1000}
@@ -90,7 +90,8 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
         # Use the bundled node (replaced with v22 LTS during build).
         node_bin = str(driver_dir / ("node.exe" if platform.system() == "Windows" else "node"))
         if cli_js.exists():
-            _patched = lambda: (node_bin, str(cli_js))
+            def _patched():
+                return (node_bin, str(cli_js))
             import playwright._impl._driver as _drv
             _drv.compute_driver_executable = _patched
             # Also patch the local binding in PipeTransport (imported via 'from').
@@ -130,7 +131,7 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
     # Catom automation profile instead.
     if _is_default_chrome_dir(exe, user_data):
         user_data = _catom_automation_profile()
-        print(f"[INFO] Chrome requires a dedicated profile for automation.")
+        print("[INFO] Chrome requires a dedicated profile for automation.")
         print(f"[INFO] Using: {user_data}")
 
     # NEVER kill the user's existing Chrome. We launch a separate instance
