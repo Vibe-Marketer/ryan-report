@@ -1063,15 +1063,16 @@
       container.innerHTML = '<div class="hint">No reports configured.</div>';
       return;
     }
-    container.innerHTML = reports.map(r =>
-      '<div style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">' +
+    container.innerHTML = reports.map(r => {
+      const jsName = escHtml(JSON.stringify(r.name));
+      return '<div style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border);">' +
         '<label style="font-size:13px; display:flex; align-items:center; gap:8px; cursor:pointer;">' +
-          '<input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleReport(\'' + r.name + '\', this.checked)" style="width:auto;"> ' +
-          r.name +
+          '<input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleReport(' + jsName + ', this.checked)" style="width:auto;"> ' +
+          escHtml(r.name) +
         '</label>' +
-        '<button class="btn btn-secondary btn-sm" onclick="removeReport(\'' + r.name + '\')" style="padding:3px 10px; font-size:11px;">Remove</button>' +
-      '</div>'
-    ).join('');
+        '<button class="btn btn-secondary btn-sm" onclick="removeReport(' + jsName + ')" style="padding:3px 10px; font-size:11px;">Remove</button>' +
+      '</div>';
+    }).join('');
   }
 
   async function toggleReport(name, enabled) {
@@ -1263,14 +1264,15 @@
     container.innerHTML = reports.map(r => {
       const statusColor = r.enabled ? 'var(--success)' : 'var(--text-dim)';
       const statusLabel = r.enabled ? 'Enabled' : 'Disabled';
-      return '<div class="report-list-item" onclick="openReportEditor(\'' + r.name + '\')">' +
+      const jsName = escHtml(JSON.stringify(r.name));
+      return '<div class="report-list-item" onclick="openReportEditor(' + jsName + ')">' +
         '<div>' +
-          '<div class="rli-name">' + r.name + '</div>' +
+          '<div class="rli-name">' + escHtml(r.name) + '</div>' +
           '<div class="rli-meta"><span style="color:' + statusColor + ';">' + statusLabel + '</span></div>' +
         '</div>' +
         '<div class="rli-actions">' +
-          '<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleReportFromList(\'' + r.name + '\', ' + !r.enabled + ')" style="padding:4px 10px; font-size:11px;">' + (r.enabled ? 'Disable' : 'Enable') + '</button>' +
-          '<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); removeReportFromList(\'' + r.name + '\')" style="padding:4px 10px; font-size:11px; color:var(--error);">Remove</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); toggleReportFromList(' + jsName + ', ' + !r.enabled + ')" style="padding:4px 10px; font-size:11px;">' + (r.enabled ? 'Disable' : 'Enable') + '</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); removeReportFromList(' + jsName + ')" style="padding:4px 10px; font-size:11px; color:var(--error);">Remove</button>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -1447,9 +1449,10 @@
     // Switch to run page and start test
     showPage('run');
     setButtons(true);
-    setStatus('running', 'Testing ' + name + '...');
+    const safeName = escHtml(name);
+    setStatus('running', 'Testing ' + safeName + '...');
     started = false;
-    logEl.innerHTML = '<div class="log-empty">Starting test run for ' + name + '...</div>';
+    logEl.innerHTML = '<div class="log-empty">Starting test run for ' + safeName + '...</div>';
     startElapsedTimer();
     await window.pywebview.api.test_run_report(name);
     pollTimer = setInterval(async () => {
