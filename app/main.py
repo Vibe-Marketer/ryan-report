@@ -5,12 +5,14 @@ Double-click to launch, click a button to run.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import platform
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,47 @@ def _user_config_dir() -> Path:
         appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
         return appdata / "Catom"
     return home / ".config" / "catom"
+
+
+# ---------------------------------------------------------------------------
+# File logging — writes every UI log line + uncaught exceptions to disk so we
+# can debug failures without rebuilding with --console mode.
+# ---------------------------------------------------------------------------
+
+_LOG_FILE: Path | None = None
+
+
+def _log_file_path() -> Path:
+    p = _user_config_dir() / "catom.log"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _file_log(msg: str) -> None:
+    global _LOG_FILE
+    if _LOG_FILE is None:
+        _LOG_FILE = _log_file_path()
+    try:
+        with _LOG_FILE.open("a", encoding="utf-8") as f:
+            ts = datetime.datetime.now().isoformat(timespec="seconds")
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass  # never let logging break the app
+
+
+def _install_excepthook() -> None:
+    """Route any uncaught exception to the log file."""
+    def _hook(exc_type, exc_value, tb):
+        msg = "".join(traceback.format_exception(exc_type, exc_value, tb))
+        _file_log(f"UNCAUGHT EXCEPTION:\n{msg}")
+        sys.__excepthook__(exc_type, exc_value, tb)
+    sys.excepthook = _hook
+
+    # Thread-level uncaught exceptions (Python 3.8+).
+    def _thread_hook(args):
+        msg = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+        _file_log(f"UNCAUGHT THREAD EXCEPTION ({args.thread.name}):\n{msg}")
+    threading.excepthook = _thread_hook
 
 
 def _user_config_path() -> Path:
@@ -270,6 +313,7 @@ class PipelineAPI:
 
     def _log(self, msg: str) -> None:
         self._log_lines.append(msg)
+        _file_log(msg)
 
     def _append_to_xlsx(self, historical_path: str, new_rows_csv: str) -> None:
         """Append new rows from the generated CSV to the xlsx version of the
@@ -938,6 +982,10 @@ class PipelineAPI:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    _install_excepthook()
+    _file_log(f"=== Catom starting (frozen={getattr(sys, 'frozen', False)}, "
+              f"platform={platform.system()}, argv={sys.argv}) ===")
+
     # --run-scheduled: headless mode for cron/launchd/Task Scheduler.
     if "--run-scheduled" in sys.argv:
         api = PipelineAPI()
@@ -955,7 +1003,12 @@ def main() -> None:
         min_size=(600, 400),
     )
     api.set_window(window)
-    webview.start(debug=("--debug" in sys.argv))
+    try:
+        webview.start(debug=("--debug" in sys.argv))
+    except Exception:
+        _file_log(f"webview.start raised:\n{traceback.format_exc()}")
+        raise
+    _file_log("=== Catom exiting cleanly ===")
 
 
 if __name__ == "__main__":
