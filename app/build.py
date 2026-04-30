@@ -319,15 +319,12 @@ def build(debug: bool = False) -> None:
     else:
         print("  [WARN] Playwright driver not found — download feature won't work")
 
-    # Bundle the actual Chromium browser binary (PRD: app must ship its own
-    # browser, never depend on the client's installed Chrome).
+    # Locate Chromium NOW (before PyInstaller runs) but DON'T pass it to
+    # PyInstaller. PyInstaller tries to ad-hoc sign every binary it bundles,
+    # and chokes on Chromium because it's a nested .app with its own
+    # framework structure. We copy it manually after PyInstaller finishes.
     chromium_dir = _install_and_locate_chromium()
-    if chromium_dir:
-        cmd.extend([
-            "--add-data",
-            f"{chromium_dir}{sep}playwright-browsers/{chromium_dir.name}",
-        ])
-    else:
+    if not chromium_dir:
         print("  [ERROR] Chromium not bundled — app will fail at runtime!")
         print("  [ERROR] Run 'playwright install chromium' and rebuild.")
 
@@ -354,6 +351,21 @@ def build(debug: bool = False) -> None:
 
     print(f"Building '{name}' for {platform.system()}...")
     _run(cmd)
+
+    # Copy Chromium into the onedir _internal/ folder BEFORE wrapping into
+    # an .app bundle. PyInstaller never touches these files, so its
+    # signing pass cannot break Chromium's nested bundle structure.
+    if chromium_dir:
+        dest = DIST_DIR / name / "_internal" / "playwright-browsers" / chromium_dir.name
+        if dest.exists():
+            shutil.rmtree(dest)
+        print(f"  Copying Chromium into onedir bundle: {dest}")
+        shutil.copytree(
+            chromium_dir,
+            dest,
+            symlinks=True,
+            copy_function=shutil.copy2,
+        )
 
     app_path = DIST_DIR / name
     if platform.system() == "Darwin":
