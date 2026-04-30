@@ -219,9 +219,48 @@ def _on_dashboard(page: Page) -> bool:
     )
 
 
+def _pw_fp(pw: str) -> str:
+    """Return a non-revealing fingerprint of a password for logging."""
+    if not pw:
+        return "(empty)"
+    if len(pw) <= 4:
+        return f"len={len(pw)} first={pw[0]!r}"
+    return f"len={len(pw)} first2={pw[:2]!r} last2={pw[-2:]!r}"
+
+
+def _log_path() -> Path:
+    """Same catom.log used by app/main.py's _file_log."""
+    home = Path.home()
+    system = platform.system()
+    if system == "Darwin":
+        base = home / "Library" / "Application Support" / "Catom"
+    elif system == "Windows":
+        appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
+        base = appdata / "Catom"
+    else:
+        base = home / ".config" / "catom"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "catom.log"
+
+
+def _flog(msg: str) -> None:
+    """Write to catom.log AND stdout. Survives --windowed PyInstaller mode."""
+    print(msg)
+    try:
+        import datetime as _dt
+        with _log_path().open("a", encoding="utf-8") as f:
+            ts = _dt.datetime.now().isoformat(timespec="seconds")
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
 def maybe_login(page: Page, config: dict[str, Any]) -> None:
     auth = config["auth"]
     base = auth["base_url"].rstrip("/")
+    _flog(f"[LOGIN] base_url={base}")
+    _flog(f"[LOGIN] username from config={auth.get('username','')!r}")
+    _flog(f"[LOGIN] password fingerprint={_pw_fp(auth.get('password',''))}")
     if page.url.rstrip("/") != base:
         page.goto(auth["base_url"], wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
@@ -229,10 +268,12 @@ def maybe_login(page: Page, config: dict[str, Any]) -> None:
     page.wait_for_timeout(2000)
 
     if page.locator("text=User Name").count() == 0:
+        _flog("[LOGIN] No User Name field found — assuming already logged in")
         return
 
     username = auth.get("username", "").strip()
     password = auth.get("password", "").strip()
+    _flog(f"[LOGIN] About to fill — username={username!r}, password fp={_pw_fp(password)}")
     if username and password:
         # Axon's login fields may start as disabled/readonly.
         # Use JS to force them editable before filling.
@@ -246,6 +287,13 @@ def maybe_login(page: Page, config: dict[str, Any]) -> None:
         page.locator("#user").fill(username)
         page.wait_for_timeout(300)
         page.locator("#password").fill(password)
+        # Read back what's actually in the field so we know if anything
+        # overwrote our fill.
+        try:
+            actual = page.evaluate("document.getElementById('password').value")
+            _flog(f"[LOGIN] Field value after fill — fp={_pw_fp(actual)}")
+        except Exception as exc:
+            _flog(f"[LOGIN] Could not read back field: {exc}")
         # Force the value through input/change events so Axon's JS sees what
         # we typed, defeating any leftover autofill that might re-populate.
         page.evaluate(
