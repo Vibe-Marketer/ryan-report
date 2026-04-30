@@ -154,21 +154,8 @@ class PipelineAPI:
         errors: list[str] = []
         warnings: list[str] = []
 
-        browser = cfg.get("browser", {})
         auth = cfg.get("auth", {})
         downloads = cfg.get("downloads", {})
-
-        exe_path = browser.get("executable_path", "")
-        if not exe_path:
-            errors.append("Browser executable path is missing.")
-        elif not Path(exe_path).exists():
-            errors.append(f"Browser executable does not exist: {exe_path}")
-
-        user_data_dir = browser.get("user_data_dir", "")
-        if not user_data_dir:
-            errors.append("Browser user data directory is missing.")
-        elif not Path(user_data_dir).exists():
-            warnings.append(f"Browser user data directory does not exist yet: {user_data_dir}")
 
         if not auth.get("base_url"):
             errors.append("Axon base URL is missing.")
@@ -208,102 +195,6 @@ class PipelineAPI:
             return False
         cfg = self.load_config()
         return bool(cfg.get("auth", {}).get("username"))
-
-    def detect_browsers(self) -> list[dict[str, str]]:
-        """Scan for supported Chromium-based browsers. Returns list of
-        {name, path, user_data_dir} for each found browser."""
-        import platform as plat
-
-        browsers: list[dict[str, str]] = []
-        is_mac = plat.system() == "Darwin"
-        is_win = plat.system() == "Windows"
-        is_linux = plat.system() == "Linux"
-        home = Path.home()
-
-        candidates: list[tuple[str, str, str]] = []
-        if is_mac:
-            candidates = [
-                ("Comet",
-                 "/Applications/Comet.app/Contents/MacOS/Comet",
-                 str(home / "Library/Application Support/Comet")),
-                ("Google Chrome",
-                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                 str(home / "Library/Application Support/Google/Chrome")),
-                ("Chromium",
-                 "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                 str(home / "Library/Application Support/Chromium")),
-                ("Brave Browser",
-                 "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-                 str(home / "Library/Application Support/BraveSoftware/Brave-Browser")),
-                ("Microsoft Edge",
-                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-                 str(home / "Library/Application Support/Microsoft Edge")),
-            ]
-        elif is_win:
-            localappdata = os.environ.get("LOCALAPPDATA", "")
-            programfiles = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-            programfiles86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
-            candidates = [
-                ("Comet",
-                 f"{localappdata}\\Programs\\Comet\\Comet.exe",
-                 f"{localappdata}\\Comet\\User Data"),
-                ("Google Chrome",
-                 f"{programfiles}\\Google\\Chrome\\Application\\chrome.exe",
-                 f"{localappdata}\\Google\\Chrome\\User Data"),
-                ("Google Chrome (x86)",
-                 f"{programfiles86}\\Google\\Chrome\\Application\\chrome.exe",
-                 f"{localappdata}\\Google\\Chrome\\User Data"),
-                ("Chromium",
-                 f"{programfiles}\\Chromium\\Application\\chromium.exe",
-                 f"{localappdata}\\Chromium\\User Data"),
-                ("Chromium (x86)",
-                 f"{programfiles86}\\Chromium\\Application\\chromium.exe",
-                 f"{localappdata}\\Chromium\\User Data"),
-                ("Brave Browser",
-                 f"{programfiles}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
-                 f"{localappdata}\\BraveSoftware\\Brave-Browser\\User Data"),
-                ("Microsoft Edge",
-                 f"{programfiles}\\Microsoft\\Edge\\Application\\msedge.exe",
-                 f"{localappdata}\\Microsoft\\Edge\\User Data"),
-                ("Microsoft Edge (x86)",
-                 f"{programfiles86}\\Microsoft\\Edge\\Application\\msedge.exe",
-                 f"{localappdata}\\Microsoft\\Edge\\User Data"),
-            ]
-        elif is_linux:
-            candidates = [
-                ("Comet", "/usr/bin/comet", str(home / ".config" / "Comet")),
-                ("Google Chrome", "/usr/bin/google-chrome", str(home / ".config" / "google-chrome")),
-                ("Chromium", "/usr/bin/chromium", str(home / ".config" / "chromium")),
-            ]
-
-        for name, exe, user_data in candidates:
-            if Path(exe).exists():
-                # Chrome blocks CDP on its default data directory.
-                # Use a dedicated Catom automation profile instead.
-                if "Google Chrome" in name:
-                    catom_profile = str(_user_config_dir() / "ChromeProfile")
-                    Path(catom_profile).mkdir(parents=True, exist_ok=True)
-                    user_data = catom_profile
-                browsers.append({
-                    "name": name,
-                    "path": exe,
-                    "user_data_dir": user_data,
-                })
-
-        return browsers
-
-    def detect_profiles(self, user_data_dir: str) -> list[str]:
-        """List available Chrome profile directories."""
-        ud = Path(user_data_dir)
-        if not ud.exists():
-            return ["Default"]
-        profiles = []
-        if (ud / "Default").exists():
-            profiles.append("Default")
-        for p in sorted(ud.iterdir()):
-            if p.is_dir() and p.name.startswith("Profile "):
-                profiles.append(p.name)
-        return profiles if profiles else ["Default"]
 
     def get_default_download_dir(self) -> str:
         return str(Path.home() / "Downloads" / "ryan-moves-and-tests")
@@ -513,6 +404,7 @@ class PipelineAPI:
             sys.path.insert(0, str(EXECUTION.parent))
             from execution.download_reports import load_config as dl_load_config
             from execution.download_reports import (
+                close_session,
                 find_axon_page,
                 launch_context,
                 maybe_login,
@@ -526,9 +418,9 @@ class PipelineAPI:
                     downloads_dir = Path(dl_cfg["downloads"]["directory"])
                     downloads_dir.mkdir(parents=True, exist_ok=True)
 
-                    self._log("[INFO] Connecting to browser...")
-                    context, launched_pid = launch_context(dl_cfg)
-                    self._log("[INFO] Browser connected")
+                    self._log("[INFO] Launching bundled browser...")
+                    context, pw = launch_context(dl_cfg)
+                    self._log("[INFO] Browser ready")
 
                     try:
                         page = find_axon_page(context, dl_cfg["auth"]["base_url"])
@@ -536,18 +428,6 @@ class PipelineAPI:
                         self._log("[INFO] Logging in to Axon...")
                         maybe_login(page, dl_cfg)
                         self._log("[INFO] Logged in to Axon")
-
-                        # Minimize Chrome now that login is done.
-                        try:
-                            cdp = context.browser.new_browser_cdp_session()
-                            cdp.send("Browser.getWindowForTarget")
-                            window = cdp.send("Browser.getWindowForTarget")
-                            cdp.send("Browser.setWindowBounds", {
-                                "windowId": window["windowId"],
-                                "bounds": {"windowState": "minimized"}
-                            })
-                        except Exception:
-                            pass
 
                         self._downloaded_files: list[Path] = []
                         for report in dl_cfg["reports"]:
@@ -564,16 +444,7 @@ class PipelineAPI:
                                 if mode == "download":
                                     return
                     finally:
-                        if launched_pid:
-                            try:
-                                context.close()
-                            except Exception:
-                                pass
-                            # Kill ONLY the Chrome we spawned, by its exact PID.
-                            try:
-                                os.kill(launched_pid, 15)  # SIGTERM
-                            except (OSError, ProcessLookupError):
-                                pass
+                        close_session(context, pw)
 
                 except Exception as exc:
                     self._log(f"[ERROR] Download failed: {exc}")
@@ -686,184 +557,10 @@ class PipelineAPI:
                         size_kb = f.stat().st_size / 1024
                         self._log(f"  {f.name} ({size_kb:.0f} KB)")
 
-            # Push to Airtable if configured.
-            airtable = cfg.get("airtable", {})
-            if airtable.get("enabled") and airtable.get("token") and airtable.get("table_url"):
-                self._push_to_airtable(cfg)
-
         except Exception as e:
             self._log(f"[ERROR] {e}")
         finally:
             self._running = False
-
-    # -- Airtable --
-
-    def _parse_airtable_url(self, url: str) -> tuple[str, str]:
-        """Extract base ID and table ID from an Airtable URL.
-
-        Airtable IDs: base = app + 17 alphanum, table = tbl + 14 alphanum.
-        URL format: https://airtable.com/appXXX.../tblYYY.../...
-        """
-        import re
-        # Match app and tbl IDs anywhere in the string.
-        base_m = re.search(r"(app[A-Za-z0-9]{14,21})", url)
-        table_m = re.search(r"(tbl[A-Za-z0-9]{14,21})", url)
-        base_id = base_m.group(1) if base_m else ""
-        table_id = table_m.group(1) if table_m else ""
-        return base_id, table_id
-
-    def _push_to_airtable(self, cfg: dict) -> None:
-        """Push the latest generated report rows to Airtable.
-
-        Uses the Airtable Web API v0 with Personal Access Token auth.
-        - Max 10 records per batch (API limit)
-        - 300ms delay between batches (rate limit: 5 req/sec/base)
-        - Field names are CASE SENSITIVE and must match the table schema
-        - 429 responses trigger a 30s retry wait
-        """
-        import csv as csv_mod
-        import urllib.request
-        import urllib.error
-
-        airtable = cfg.get("airtable", {})
-        token = airtable.get("token", "")
-        base_id, table_id = self._parse_airtable_url(airtable.get("table_url", ""))
-
-        if not token:
-            self._log("[WARN] No Airtable token configured -- skipping push")
-            return
-        if not base_id or not table_id:
-            self._log("[ERROR] Could not parse base/table ID from Airtable URL. "
-                      "URL should look like: https://airtable.com/appXXX/tblYYY")
-            return
-
-        # Read the generated report CSV.
-        dl_dir = Path(cfg.get("downloads", {}).get("directory", ""))
-        report_csv = dl_dir / "generated-ryan-report-latest-new-only.csv"
-        if not report_csv.exists():
-            self._log("[WARN] No generated report found -- skipping Airtable push")
-            return
-
-        # Parse CSV -- skip the two header rows, read data rows.
-        with report_csv.open("r", encoding="utf-8-sig") as f:
-            lines = list(csv_mod.reader(f))
-
-        if len(lines) < 3:
-            self._log("[INFO] No data rows to push to Airtable")
-            return
-
-        # CSV column index -> our internal name.
-        csv_columns = ["Row", "Truck#", "PO#", "By Whom", "Date Move",
-                       "Machine#", "Hour Meter", "Machine Description",
-                       "From", "To", "Order#"]
-
-        # Default mapping: our column name -> Airtable field name.
-        # Users can override this in config via airtable.field_map.
-        default_map = {
-            "Truck#": "Truck #",
-            "PO#": "PO#",
-            "By Whom": "By Whom",
-            "Date Move": "Date Move",
-            "Machine#": "Machine#",
-            "Hour Meter": "Hour Meter",
-            "Machine Description": "Machine Description",
-            "From": "From Job#",
-            "To": "To Job #",
-            "Order#": "Order #",
-        }
-        field_map = airtable.get("field_map", default_map)
-
-        # Which columns to push (configurable, defaults to all mapped ones).
-        selected = airtable.get("columns", list(field_map.keys()))
-
-        records = []
-        for row in lines[2:]:  # Skip 2 header rows.
-            if not row or not any(row):
-                continue
-            fields = {}
-            for i, col_name in enumerate(csv_columns):
-                if i < len(row) and col_name in selected and col_name in field_map:
-                    airtable_field = field_map[col_name]
-                    val = row[i].strip()
-                    if val and val.lower() not in ("n/a", "na", "none", "null"):
-                        # Date fields need ISO format for Airtable.
-                        if airtable_field == "Date Move":
-                            try:
-                                from datetime import datetime
-                                dt = datetime.strptime(val, "%d-%b")
-                                dt = dt.replace(year=datetime.now().year)
-                                val = dt.strftime("%Y-%m-%d")
-                            except ValueError:
-                                pass  # Send as-is if parsing fails
-                        fields[airtable_field] = str(val)
-            if fields:
-                records.append({"fields": fields})
-
-        if not records:
-            self._log("[INFO] No records to push to Airtable")
-            return
-
-        self._log(f"[INFO] Pushing {len(records)} rows to Airtable...")
-
-        # Airtable API: max 10 records per request, 5 requests/sec/base.
-        api_url = f"https://api.airtable.com/v0/{base_id}/{table_id}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
-
-        pushed = 0
-        for batch_num, i in enumerate(range(0, len(records), 10)):
-            batch = records[i:i+10]
-            body = json.dumps({"records": batch}).encode()
-            req = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
-
-            try:
-                with urllib.request.urlopen(req, timeout=30):
-                    pushed += len(batch)
-                    self._log(f"  Batch {batch_num+1}: {len(batch)} records sent")
-            except urllib.error.HTTPError as e:
-                err_body = e.read().decode()[:300]
-                if e.code == 429:
-                    self._log("[WARN] Rate limited by Airtable -- waiting 30s...")
-                    time.sleep(30)
-                    # Retry this batch.
-                    try:
-                        req2 = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
-                        with urllib.request.urlopen(req2, timeout=30):
-                            pushed += len(batch)
-                    except Exception as e2:
-                        self._log(f"[ERROR] Retry failed: {e2}")
-                        return
-                elif e.code == 422:
-                    # Field name mismatch -- parse the error for the user.
-                    self._log("[ERROR] Airtable rejected the data (422). This usually means "
-                              "your Airtable table field names don't match exactly.")
-                    self._log(f"  Expected fields: {', '.join(selected)}")
-                    self._log(f"  Airtable says: {err_body}")
-                    self._log("  Fix: Make sure your Airtable table has columns with these "
-                              "EXACT names (case-sensitive).")
-                    return
-                elif e.code == 401:
-                    self._log("[ERROR] Airtable token is invalid or expired. "
-                              "Create a new one at airtable.com/create/tokens")
-                    return
-                elif e.code == 403:
-                    self._log("[ERROR] Token doesn't have access to this base. "
-                              "Edit your token at airtable.com and add this base.")
-                    return
-                else:
-                    self._log(f"[ERROR] Airtable error ({e.code}): {err_body}")
-                    return
-            except Exception as e:
-                self._log(f"[ERROR] Airtable push failed: {e}")
-                return
-
-            # Rate limit: wait 300ms between batches.
-            if i + 10 < len(records):
-                time.sleep(0.3)
-
-        self._log(f"[OK] Pushed {pushed} rows to Airtable")
 
     # -- Report Management --
 
@@ -1195,16 +892,16 @@ class PipelineAPI:
                     "2. Add your Anthropic API key\n"
                     "3. Try again\n\n"
                     "Common fixes:\n"
-                    "- 'Profile lock' error: Close your browser, reopen it, try again\n"
+                    "- 'Login failed' error: Check your Axon username/password in Settings\n"
                     "- 'element not found' error: The Axon page layout may have changed -- contact support\n"
-                    "- 'Download failed' error: Make sure you're logged into Axon in your browser\n"
+                    "- 'Download failed' error: Try running the report again, or check Axon is reachable\n"
                     "- 'FileNotFoundError': Check that your Ryan Moves CSV path is correct in Settings"
                 )
 
             prompt = (
                 "You are a troubleshooting assistant for the Ryan Report app. "
                 "This app downloads reports from Axon TMS (a trucking management system) "
-                "via browser automation (Playwright CDP) and builds a combined CSV report. "
+                "via browser automation using its own bundled Chromium and builds a combined CSV report. "
                 "The user got an error. Diagnose the problem and give a clear, "
                 "non-technical fix in 2-3 sentences. Here's the error log:\n\n"
                 f"{error_log[-2000:]}"

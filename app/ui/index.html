@@ -287,31 +287,10 @@
         <div class="step-dot" id="dot-3"></div>
         <div class="step-dot" id="dot-4"></div>
         <div class="step-dot" id="dot-5"></div>
-        <div class="step-dot" id="dot-6"></div>
       </div>
 
-      <!-- Step 0: Browser -->
+      <!-- Step 0: Axon credentials -->
       <div class="step active" id="step-0">
-        <div class="field">
-          <label>Which browser do you use for Axon?</label>
-          <select id="setup-browser" onchange="onBrowserSelect()">
-            <option value="">Detecting browsers...</option>
-          </select>
-          <div class="hint" id="browser-hint"></div>
-        </div>
-        <div class="field" id="profile-field" style="display:none;">
-          <label>Browser Profile</label>
-          <select id="setup-profile"></select>
-          <div class="hint">If unsure, leave as "Default" -- it usually works.</div>
-        </div>
-        <div class="step-actions">
-          <div></div>
-          <button class="btn btn-primary" onclick="nextStep()">Next</button>
-        </div>
-      </div>
-
-      <!-- Step 1: Axon credentials -->
-      <div class="step" id="step-1">
         <div class="field">
           <label>Your company name in Axon</label>
           <div style="display:flex; align-items:center; gap:0;">
@@ -331,13 +310,13 @@
           <input type="password" id="setup-password" placeholder="Your password">
         </div>
         <div class="step-actions">
-          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+          <div></div>
           <button class="btn btn-primary" onclick="nextStep()">Next</button>
         </div>
       </div>
 
-      <!-- Step 2: Historical file -->
-      <div class="step" id="step-2">
+      <!-- Step 1: Historical file -->
+      <div class="step" id="step-1">
         <div class="field">
           <label>Select your existing Ryan Moves spreadsheet</label>
           <div class="field-row">
@@ -354,8 +333,8 @@
         </div>
       </div>
 
-      <!-- Step 3: Destination folder -->
-      <div class="step" id="step-3">
+      <!-- Step 2: Destination folder -->
+      <div class="step" id="step-2">
         <div class="field">
           <label>Where should reports be saved?</label>
           <div class="field-row">
@@ -373,8 +352,8 @@
         </div>
       </div>
 
-      <!-- Step 4: Anthropic API Key (optional) -->
-      <div class="step" id="step-4">
+      <!-- Step 3: Anthropic API Key (optional) -->
+      <div class="step" id="step-3">
         <div class="field">
           <label>Anthropic API Key</label>
           <input type="password" id="setup-api-key" placeholder="sk-ant-...">
@@ -387,8 +366,8 @@
         </div>
       </div>
 
-      <!-- Step 5: Schedule (optional) -->
-      <div class="step" id="step-5">
+      <!-- Step 4: Schedule (optional) -->
+      <div class="step" id="step-4">
         <div class="field">
           <label>
             <input type="checkbox" id="setup-schedule-enabled" style="width:auto; margin-right:8px;" onchange="document.getElementById('setup-schedule-options').style.display = this.checked ? 'block' : 'none';">
@@ -430,8 +409,8 @@
         </div>
       </div>
 
-      <!-- Step 6: Confirm -->
-      <div class="step" id="step-6">
+      <!-- Step 5: Confirm -->
+      <div class="step" id="step-5">
         <div style="text-align:center; padding: 16px 0 8px;">
           <div style="font-size: 40px; margin-bottom: 12px;">&#10003;</div>
           <p style="font-size: 15px; margin-bottom: 20px;">Everything looks good. Your settings will be saved.</p>
@@ -479,21 +458,6 @@
       <div class="field">
         <label>Password</label>
         <input type="password" id="cfg-password">
-      </div>
-    </div>
-    <div class="settings-section">
-      <h3>Browser</h3>
-      <div class="field">
-        <label>Browser Path</label>
-        <input type="text" id="cfg-browser-path">
-      </div>
-      <div class="field">
-        <label>Profile Directory</label>
-        <input type="text" id="cfg-profile-dir">
-      </div>
-      <div class="field">
-        <label>User Data Directory</label>
-        <input type="text" id="cfg-user-data">
       </div>
     </div>
     <div class="settings-section">
@@ -563,30 +527,8 @@
 
     <div class="settings-section">
       <h3>Output Columns</h3>
-      <div class="hint" style="margin-bottom:10px;">Choose which columns appear in the generated report and get pushed to Airtable.</div>
+      <div class="hint" style="margin-bottom:10px;">Choose which columns appear in the generated report.</div>
       <div id="output-columns" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;"></div>
-    </div>
-
-    <div class="settings-section">
-      <h3>Airtable (Optional)</h3>
-      <div class="field">
-        <label>
-          <input type="checkbox" id="cfg-airtable-enabled" style="width:auto; margin-right:8px;">
-          Push results to Airtable after each run
-        </label>
-      </div>
-      <div id="airtable-options" style="display:none;">
-        <div class="field">
-          <label>Airtable Personal Access Token</label>
-          <input type="password" id="cfg-airtable-token" placeholder="pat...">
-          <div class="hint">Create one at airtable.com/create/tokens -- needs data read/write scope</div>
-        </div>
-        <div class="field">
-          <label>Airtable Table URL</label>
-          <input type="text" id="cfg-airtable-url" placeholder="https://airtable.com/appXXXXX/tblYYYYY">
-          <div class="hint">Open your table in Airtable and paste the URL from the address bar</div>
-        </div>
-      </div>
     </div>
 
     <div class="settings-section">
@@ -697,8 +639,7 @@
   let elapsedSeconds = 0;
   let started = false;
   let currentStep = 0;
-  const TOTAL_STEPS = 7;
-  let detectedBrowsers = [];
+  const TOTAL_STEPS = 6;
 
   // ============================================================
   // ELAPSED TIMER
@@ -735,8 +676,7 @@
       showPage('run');
     } else {
       showPage('setup');
-      await loadBrowsers();
-      // Pre-fill the default download dir for step 3
+      // Pre-fill the default download dir
       const defaultDir = await window.pywebview.api.get_default_download_dir();
       document.getElementById('setup-download-dir').value = defaultDir;
     }
@@ -745,54 +685,6 @@
   // ============================================================
   // SETUP WIZARD
   // ============================================================
-  async function loadBrowsers() {
-    detectedBrowsers = await window.pywebview.api.detect_browsers();
-    const sel = document.getElementById('setup-browser');
-    sel.innerHTML = '';
-    if (detectedBrowsers.length === 0) {
-      sel.innerHTML = '<option value="">No browsers found -- enter path manually</option>';
-      document.getElementById('browser-hint').textContent = 'No Chromium browsers detected.';
-    } else {
-      // Find Chrome for auto-selection (recommended)
-      let chromeIdx = -1;
-      for (let i = 0; i < detectedBrowsers.length; i++) {
-        const b = detectedBrowsers[i];
-        const opt = document.createElement('option');
-        opt.value = b.path;
-        if (b.name.toLowerCase().indexOf('chrome') !== -1) {
-          opt.textContent = b.name + ' (Recommended)';
-          chromeIdx = i;
-        } else {
-          opt.textContent = b.name;
-        }
-        sel.appendChild(opt);
-      }
-      // Auto-select Chrome if found, otherwise first browser
-      if (chromeIdx >= 0) {
-        sel.selectedIndex = chromeIdx;
-      }
-      document.getElementById('browser-hint').innerHTML =
-        detectedBrowsers.length + ' browser(s) found <span class="detected">auto-detected</span>';
-      onBrowserSelect();
-    }
-  }
-
-  async function onBrowserSelect() {
-    const sel = document.getElementById('setup-browser');
-    const browser = detectedBrowsers.find(b => b.path === sel.value);
-    if (!browser) return;
-
-    const profiles = await window.pywebview.api.detect_profiles(browser.user_data_dir);
-    const profSel = document.getElementById('setup-profile');
-    profSel.innerHTML = '';
-    for (const p of profiles) {
-      const opt = document.createElement('option');
-      opt.value = p;
-      opt.textContent = p === 'Default' ? 'Default (most common)' : p;
-      profSel.appendChild(opt);
-    }
-    document.getElementById('profile-field').style.display = profiles.length > 1 ? 'block' : 'none';
-  }
 
   function updateStepDots() {
     for (let i = 0; i < TOTAL_STEPS; i++) {
@@ -808,7 +700,6 @@
     updateStepDots();
 
     const titles = [
-      'Select Your Browser',
       'Axon Login',
       'Your Ryan Spreadsheet',
       'Destination Folder',
@@ -817,7 +708,6 @@
       'Ready to Go'
     ];
     const subtitles = [
-      'We\'ll use this to download reports from Axon.',
       'Enter your Axon TMS credentials.',
       'Point us to your existing Ryan Moves file (optional).',
       'Choose where reports get saved.',
@@ -832,8 +722,8 @@
   }
 
   function nextStep() {
-    // When leaving step 1, build the full URL from subdomain
-    if (currentStep === 1) {
+    // When leaving step 0 (Axon login), build the full URL from subdomain
+    if (currentStep === 0) {
       const sub = document.getElementById('setup-subdomain').value.trim().toLowerCase();
       document.getElementById('setup-url').value = sub ? 'https://' + sub + '.axoneta.io/' : '';
     }
@@ -855,12 +745,10 @@
   }
 
   function buildSummary() {
-    const browser = detectedBrowsers.find(b => b.path === document.getElementById('setup-browser').value);
     const sub = document.getElementById('setup-subdomain').value.trim();
     const url = sub ? 'https://' + sub + '.axoneta.io/' : '(not set)';
     const user = document.getElementById('setup-username').value || '(not set)';
     const hist = document.getElementById('setup-historical').value || '(none -- will start fresh)';
-    const bname = browser ? browser.name : '(not set)';
     const dlDir = document.getElementById('setup-download-dir').value || '(default)';
     const apiKey = document.getElementById('setup-api-key').value ? 'Configured' : 'Not set';
     const schedEnabled = document.getElementById('setup-schedule-enabled').checked;
@@ -872,7 +760,6 @@
     }
 
     document.getElementById('setup-summary').innerHTML =
-      '<div><strong>Browser:</strong> ' + bname + '</div>' +
       '<div><strong>Axon URL:</strong> ' + url + '</div>' +
       '<div><strong>Username:</strong> ' + user + '</div>' +
       '<div><strong>Password:</strong> ' + '*'.repeat(document.getElementById('setup-password').value.length || 0) + '</div>' +
@@ -888,18 +775,9 @@
   }
 
   async function finishSetup() {
-    const browser = detectedBrowsers.find(b => b.path === document.getElementById('setup-browser').value);
-    const profile = document.getElementById('setup-profile').value || 'Default';
     const dlDir = document.getElementById('setup-download-dir').value || await window.pywebview.api.get_default_download_dir();
 
     const cfg = {
-      browser: {
-        engine: 'chromium',
-        headless: true,
-        executable_path: browser ? browser.path : '',
-        user_data_dir: browser ? browser.user_data_dir : '',
-        profile_directory: profile
-      },
       auth: {
         base_url: document.getElementById('setup-url').value,
         username: document.getElementById('setup-username').value,
@@ -983,9 +861,6 @@
     document.getElementById('cfg-url').value = cfg?.auth?.base_url || '';
     document.getElementById('cfg-username').value = cfg?.auth?.username || '';
     document.getElementById('cfg-password').value = cfg?.auth?.password || '';
-    document.getElementById('cfg-browser-path').value = cfg?.browser?.executable_path || '';
-    document.getElementById('cfg-profile-dir').value = cfg?.browser?.profile_directory || 'Default';
-    document.getElementById('cfg-user-data').value = cfg?.browser?.user_data_dir || '';
     document.getElementById('cfg-download-dir').value = cfg?.downloads?.directory || '';
     document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
     document.getElementById('cfg-api-key').value = cfg?.anthropic_api_key || '';
@@ -993,13 +868,6 @@
     // Hours saved
     const hoursSaved = await window.pywebview.api.get_hours_saved();
     document.getElementById('cfg-hours-saved-display').textContent = hoursSaved.toFixed(1);
-
-    // Airtable
-    const at = cfg?.airtable || {};
-    document.getElementById('cfg-airtable-enabled').checked = !!at.enabled;
-    document.getElementById('airtable-options').style.display = at.enabled ? 'block' : 'none';
-    document.getElementById('cfg-airtable-token').value = at.token || '';
-    document.getElementById('cfg-airtable-url').value = at.table_url || '';
 
     // Reports list
     await loadReports();
@@ -1031,16 +899,13 @@
   document.getElementById('cfg-schedule-enabled').addEventListener('change', function() {
     document.getElementById('schedule-options').style.display = this.checked ? 'block' : 'none';
   });
-  document.getElementById('cfg-airtable-enabled').addEventListener('change', function() {
-    document.getElementById('airtable-options').style.display = this.checked ? 'block' : 'none';
-  });
 
   // All available output columns
   const ALL_COLUMNS = ['Row', 'Truck#', 'PO#', 'By Whom', 'Date Move',
     'Machine#', 'Hour Meter', 'Machine Description', 'From', 'To', 'Order#'];
 
   function loadOutputColumns(cfg) {
-    const selected = cfg?.airtable?.columns || ALL_COLUMNS;
+    const selected = cfg?.output_columns || ALL_COLUMNS;
     const container = document.getElementById('output-columns');
     container.innerHTML = '';
     for (const col of ALL_COLUMNS) {
@@ -1103,22 +968,11 @@
     cfg.auth.username = document.getElementById('cfg-username').value;
     cfg.auth.password = document.getElementById('cfg-password').value;
     cfg.auth.manual_login_timeout_seconds = cfg.auth.manual_login_timeout_seconds || 180;
-    cfg.browser = cfg.browser || {};
-    cfg.browser.executable_path = document.getElementById('cfg-browser-path').value;
-    cfg.browser.profile_directory = document.getElementById('cfg-profile-dir').value || 'Default';
-    cfg.browser.user_data_dir = document.getElementById('cfg-user-data').value;
-    cfg.browser.engine = 'chromium'; cfg.browser.headless = false;
     cfg.downloads = cfg.downloads || {};
     cfg.downloads.directory = document.getElementById('cfg-download-dir').value;
     cfg.historical_ryan = document.getElementById('cfg-historical').value;
     cfg.anthropic_api_key = document.getElementById('cfg-api-key').value;
-
-    // Airtable
-    cfg.airtable = cfg.airtable || {};
-    cfg.airtable.enabled = document.getElementById('cfg-airtable-enabled').checked;
-    cfg.airtable.token = document.getElementById('cfg-airtable-token').value;
-    cfg.airtable.table_url = document.getElementById('cfg-airtable-url').value;
-    cfg.airtable.columns = getSelectedColumns();
+    cfg.output_columns = getSelectedColumns();
 
     await window.pywebview.api.save_config(cfg);
 
