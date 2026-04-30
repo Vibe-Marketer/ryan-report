@@ -41,6 +41,10 @@ def _bundled_chromium_executable() -> str | None:
     In a PyInstaller bundle, build.py copies the entire chromium-<rev>
     folder from the ms-playwright cache into <MEIPASS>/playwright-browsers/.
     In dev mode, return None so Playwright uses its default cache.
+
+    Modern Playwright ships "Google Chrome for Testing" in arch-specific
+    folders (chrome-mac-arm64, chrome-mac-x64, chrome-win-x64, etc.) so we
+    glob rather than hardcode names.
     """
     if not getattr(sys, "frozen", False):
         return None
@@ -56,15 +60,26 @@ def _bundled_chromium_executable() -> str | None:
     chromium_dir = candidates[0]
     system = platform.system()
     if system == "Darwin":
-        exe = (
-            chromium_dir / "chrome-mac" / "Chromium.app" / "Contents"
-            / "MacOS" / "Chromium"
-        )
-    elif system == "Windows":
-        exe = chromium_dir / "chrome-win" / "chrome.exe"
-    else:
-        exe = chromium_dir / "chrome-linux" / "chrome"
-    return str(exe) if exe.exists() else None
+        # chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/<same name>
+        # (legacy: chrome-mac/Chromium.app/.../Chromium)
+        for arch_dir in chromium_dir.glob("chrome-mac*"):
+            for app_dir in arch_dir.glob("*.app"):
+                exe = app_dir / "Contents" / "MacOS" / app_dir.stem
+                if exe.exists():
+                    return str(exe)
+        return None
+    if system == "Windows":
+        for win_dir in chromium_dir.glob("chrome-win*"):
+            exe = win_dir / "chrome.exe"
+            if exe.exists():
+                return str(exe)
+        return None
+    # Linux
+    for lin_dir in chromium_dir.glob("chrome-linux*"):
+        exe = lin_dir / "chrome"
+        if exe.exists():
+            return str(exe)
+    return None
 
 
 def _app_browser_profile_dir() -> str:
