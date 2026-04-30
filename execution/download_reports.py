@@ -9,9 +9,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import BrowserContext, Page, TimeoutError, sync_playwright
+from playwright.sync_api import (
+    BrowserContext,
+    Page,
+    Playwright,
+    TimeoutError,
+    sync_playwright,
+)
 
-CDP_PORT = 9224  # Port for Chrome DevTools Protocol connection to a Chromium browser.
 VIEWPORT = {"width": 1600, "height": 1000}
 
 
@@ -30,71 +35,81 @@ def load_config(path: Path) -> dict[str, Any]:
     return _expand(cfg)
 
 
-def _cdp_endpoint() -> str:
-    return f"http://localhost:{CDP_PORT}"
+def _bundled_chromium_executable() -> str | None:
+    """Return path to the Chromium binary bundled inside the frozen app.
 
-
-def _is_default_chrome_dir(exe: str, user_data: str) -> bool:
-    """Return True if the user_data_dir is Chrome's default location.
-
-    Chrome blocks CDP (--remote-debugging-port) when using its default
-    data directory.  We detect this so we can redirect to a dedicated
-    Catom automation profile instead.
+    In a PyInstaller bundle, build.py copies the entire chromium-<rev>
+    folder from the ms-playwright cache into <MEIPASS>/playwright-browsers/.
+    In dev mode, return None so Playwright uses its default cache.
     """
-    exe_lower = exe.lower()
-    is_chrome = "google chrome" in exe_lower or "chrome.exe" in exe_lower
-    if not is_chrome:
-        return False
-    home = str(Path.home())
-    defaults = [
-        os.path.join(home, "Library", "Application Support", "Google", "Chrome"),
-        os.path.join(home, "AppData", "Local", "Google", "Chrome", "User Data"),
-        os.path.join(home, ".config", "google-chrome"),
+    if not getattr(sys, "frozen", False):
+        return None
+    base = Path(sys._MEIPASS) / "playwright-browsers"
+    if not base.exists():
+        return None
+    candidates = [
+        d for d in base.iterdir()
+        if d.is_dir() and d.name.startswith("chromium-")
     ]
-    resolved = os.path.realpath(user_data)
-    return any(os.path.realpath(d) == resolved for d in defaults)
-
-
-def _catom_automation_profile() -> str:
-    """Return the path to Catom's dedicated Chrome automation profile."""
+    if not candidates:
+        return None
+    chromium_dir = candidates[0]
     system = platform.system()
-    home = Path.home()
     if system == "Darwin":
-        base = home / "Library" / "Application Support" / "Catom" / "ChromeProfile"
+        exe = (
+            chromium_dir / "chrome-mac" / "Chromium.app" / "Contents"
+            / "MacOS" / "Chromium"
+        )
     elif system == "Windows":
-        appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
-        base = appdata / "Catom" / "ChromeProfile"
+        exe = chromium_dir / "chrome-win" / "chrome.exe"
     else:
-        base = home / ".config" / "catom" / "ChromeProfile"
+        exe = chromium_dir / "chrome-linux" / "chrome"
+    return str(exe) if exe.exists() else None
+
+
+def _app_browser_profile_dir() -> str:
+    """Return the app-private browser profile directory.
+
+    Login state, cookies, and session data persist here across runs. Lives
+    under the user's app-data area, separate from any other browser profile.
+    """
+    home = Path.home()
+    system = platform.system()
+    if system == "Darwin":
+        base = home / "Library" / "Application Support" / "Catom" / "browser-profile"
+    elif system == "Windows":
+        appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
+        base = appdata / "Catom" / "browser-profile"
+    else:
+        base = home / ".config" / "catom" / "browser-profile"
     base.mkdir(parents=True, exist_ok=True)
     return str(base)
 
 
-def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
-    """Connect to an existing Chromium browser or launch one with CDP enabled.
+def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, Playwright]:
+    """Launch the bundled Chromium with the app-private profile.
 
-    The browser runs headless by default so it never takes over the screen.
-    Returns (context, launched) where *launched* is True if we started a new
-    process (caller should close it), False if we attached to an existing one.
+    The PRD requires the app to manage its own browser end-to-end: never
+    connect to a user-installed Chrome, never read a browser executable
+    path from config, never share a profile with the user's normal browser.
+
+    Returns (context, playwright). Caller MUST call close_session() when done.
     """
-    import subprocess
-
-    browser_cfg = config["browser"]
-
-    # In a PyInstaller bundle, Playwright's bundled Node.js binary often
-    # crashes (OOM / code signing issues).  Use the system node instead,
-    # paired with the bundled Playwright CLI script.
+    # Fix Playwright's driver path inside a PyInstaller bundle. The driver
+    # ships a Node binary; build.py replaces v24 (which has a V8 CodeRange
+    # OOM bug on macOS arm64) with v22 LTS. We point Playwright at the
+    # bundled cli.js + node so it doesn't try to reinstall.
     if getattr(sys, "frozen", False):
         driver_dir = Path(sys._MEIPASS) / "playwright" / "driver"
         cli_js = driver_dir / "package" / "cli.js"
-        # Use the bundled node (replaced with v22 LTS during build).
-        node_bin = str(driver_dir / ("node.exe" if platform.system() == "Windows" else "node"))
+        node_bin = str(
+            driver_dir / ("node.exe" if platform.system() == "Windows" else "node")
+        )
         if cli_js.exists():
             def _patched():
                 return (node_bin, str(cli_js))
             import playwright._impl._driver as _drv
             _drv.compute_driver_executable = _patched
-            # Also patch the local binding in PipeTransport (imported via 'from').
             import playwright._impl._transport as _transport
             _transport.compute_driver_executable = _patched
 
@@ -106,65 +121,52 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, bool]:
             f"Try restarting the app."
         )
 
-    # 1) Try connecting to an already-running browser with CDP.
+    user_data_dir = _app_browser_profile_dir()
+    chromium_exe = _bundled_chromium_executable()
+
+    launch_kwargs: dict[str, Any] = {
+        "user_data_dir": user_data_dir,
+        "headless": False,
+        "viewport": VIEWPORT,
+        "accept_downloads": True,
+        "args": [
+            "--no-first-run",
+            "--no-default-browser-check",
+        ],
+    }
+    if chromium_exe:
+        launch_kwargs["executable_path"] = chromium_exe
+        print(f"[INFO] Launching bundled Chromium: {chromium_exe}")
+    else:
+        print("[INFO] Launching Playwright Chromium (dev mode, no bundled binary)")
+
     try:
-        browser = playwright.chromium.connect_over_cdp(_cdp_endpoint())
-        context = browser.contexts[0]
-        context.set_default_timeout(15000)
-        print(f"[INFO] Connected to existing browser on port {CDP_PORT}")
-        return context, False
+        context = playwright.chromium.launch_persistent_context(**launch_kwargs)
+    except Exception as exc:
+        try:
+            playwright.stop()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"Could not launch the bundled browser: {exc}. "
+            f"Try reinstalling Catom, or in dev mode run "
+            f"'python -m playwright install chromium'."
+        )
+
+    context.set_default_timeout(15000)
+    return context, playwright
+
+
+def close_session(context: BrowserContext, playwright: Playwright) -> None:
+    """Close a context+playwright pair returned by launch_context()."""
+    try:
+        context.close()
     except Exception:
         pass
-
-    # 2) No CDP available — launch (or relaunch) with CDP enabled.
-    exe = browser_cfg.get("executable_path")
-    profile_dir = browser_cfg.get("profile_directory", "Default")
-    user_data = browser_cfg["user_data_dir"]
-    if not exe:
-        raise RuntimeError("Browser executable path is missing in config.")
-    if not Path(exe).exists():
-        raise RuntimeError(f"Browser executable does not exist: {exe}")
-    if not user_data:
-        raise RuntimeError("Browser user data directory is missing in config.")
-
-    # Chrome blocks CDP on its default data directory. Use a dedicated
-    # Catom automation profile instead.
-    if _is_default_chrome_dir(exe, user_data):
-        user_data = _catom_automation_profile()
-        print("[INFO] Chrome requires a dedicated profile for automation.")
-        print(f"[INFO] Using: {user_data}")
-
-    # NEVER kill the user's existing Chrome. We launch a separate instance
-    # with our own --user-data-dir which runs alongside their Chrome.
-
-    launch_args = [
-        exe,
-        f"--remote-debugging-port={CDP_PORT}",
-        f"--user-data-dir={user_data}",
-        f"--profile-directory={profile_dir}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--start-minimized",
-    ]
-    print("[INFO] Launching browser...")
-
-    _launched_process = subprocess.Popen(launch_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    for _ in range(30):
-        time.sleep(1)
-        try:
-            browser = playwright.chromium.connect_over_cdp(_cdp_endpoint())
-            context = browser.contexts[0]
-            context.set_default_timeout(15000)
-            print(f"[INFO] Launched browser with CDP on port {CDP_PORT}")
-            return context, _launched_process.pid
-        except Exception:
-            continue
-
-    raise RuntimeError(
-        f"Could not connect to browser on port {CDP_PORT} after 30 seconds. "
-        f"Try quitting all browser instances and re-running."
-    )
+    try:
+        playwright.stop()
+    except Exception:
+        pass
 
 
 def find_axon_page(context: BrowserContext, base_url: str) -> Page:
@@ -363,9 +365,9 @@ def run_single_report(
     downloads_dir = Path(config["downloads"]["directory"])
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
-    _log("[INFO] Connecting to browser...")
-    context, launched_pid = launch_context(config)
-    _log("[INFO] Browser connected")
+    _log("[INFO] Launching bundled browser...")
+    context, pw = launch_context(config)
+    _log("[INFO] Browser ready")
     try:
         page = find_axon_page(context, config["auth"]["base_url"])
         page.set_viewport_size(VIEWPORT)
@@ -375,20 +377,12 @@ def run_single_report(
         _log(f"[INFO] Running path: {report['name']}...")
         return run_report(page, report, downloads_dir)
     finally:
-        if launched_pid:
-            try:
-                context.close()
-            except Exception:
-                pass
-            try:
-                os.kill(launched_pid, 15)
-            except (OSError, ProcessLookupError):
-                pass
+        close_session(context, pw)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Download Axon Ryan reports using a persistent browser profile."
+        description="Download Axon Ryan reports using the bundled browser."
     )
     parser.add_argument("--config", required=True)
     args = parser.parse_args()
@@ -396,7 +390,7 @@ def main() -> None:
     config = load_config(Path(args.config))
     downloads_dir = Path(config["downloads"]["directory"])
     downloads_dir.mkdir(parents=True, exist_ok=True)
-    context, we_launched = launch_context(config)
+    context, pw = launch_context(config)
     try:
         page = find_axon_page(context, config["auth"]["base_url"])
         page.set_viewport_size(VIEWPORT)
@@ -414,8 +408,7 @@ def main() -> None:
                     f"Timed out while downloading {report['name']}: {exc}"
                 ) from exc
     finally:
-        if we_launched:
-            context.close()
+        close_session(context, pw)
 
 
 if __name__ == "__main__":

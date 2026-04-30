@@ -174,6 +174,60 @@ def _find_playwright_driver() -> str | None:
     return None
 
 
+def _ms_playwright_cache() -> Path | None:
+    """Return the ms-playwright cache root for the current platform."""
+    home = Path.home()
+    system = platform.system()
+    if system == "Darwin":
+        return home / "Library" / "Caches" / "ms-playwright"
+    if system == "Linux":
+        return home / ".cache" / "ms-playwright"
+    if system == "Windows":
+        userprofile = Path(os.environ.get("USERPROFILE", str(home)))
+        return userprofile / "AppData" / "Local" / "ms-playwright"
+    return None
+
+
+def _install_and_locate_chromium() -> Path | None:
+    """Ensure Playwright Chromium is installed locally and return its path.
+
+    The PRD requires the app to ship its own browser; we copy the entire
+    chromium-<rev> folder from the ms-playwright cache into the bundle so
+    no client-side Chrome install is ever required.
+    """
+    print("Ensuring Playwright Chromium is installed...")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(f"  [WARN] 'playwright install chromium' failed: {exc}")
+        # Continue — maybe it's already installed and we can still find it.
+
+    cache_root = _ms_playwright_cache()
+    if not cache_root or not cache_root.exists():
+        print(f"  [WARN] ms-playwright cache not found at {cache_root}")
+        return None
+
+    candidates = sorted(
+        [
+            p for p in cache_root.iterdir()
+            if p.is_dir()
+            and p.name.startswith("chromium-")
+            and not p.name.startswith("chromium_headless")
+        ],
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if not candidates:
+        print(f"  [WARN] No chromium-* folder under {cache_root}")
+        return None
+    chromium_dir = candidates[0]
+    print(f"  Bundling Chromium from: {chromium_dir}")
+    return chromium_dir
+
+
 def _fix_playwright_node(app_path: Path) -> None:
     """Replace Playwright's bundled Node.js with a version that works.
 
@@ -264,6 +318,18 @@ def build(debug: bool = False) -> None:
         print(f"  Bundling Playwright driver from: {pw_driver}")
     else:
         print("  [WARN] Playwright driver not found — download feature won't work")
+
+    # Bundle the actual Chromium browser binary (PRD: app must ship its own
+    # browser, never depend on the client's installed Chrome).
+    chromium_dir = _install_and_locate_chromium()
+    if chromium_dir:
+        cmd.extend([
+            "--add-data",
+            f"{chromium_dir}{sep}playwright-browsers/{chromium_dir.name}",
+        ])
+    else:
+        print("  [ERROR] Chromium not bundled — app will fail at runtime!")
+        print("  [ERROR] Run 'playwright install chromium' and rebuild.")
 
     # App icon.
     icon_path = APP_DIR / ("icon.icns" if platform.system() == "Darwin" else "icon.png")
