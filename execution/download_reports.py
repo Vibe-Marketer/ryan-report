@@ -147,6 +147,13 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, Playwright]:
         "args": [
             "--no-first-run",
             "--no-default-browser-check",
+            # Disable Chrome's password manager + autofill — they otherwise
+            # overwrite our programmatic fill with the previously-saved
+            # value, which made password updates in Settings ineffective.
+            "--disable-features=PasswordManager,AutofillServerCommunication,"
+            "PasswordManagerOnboarding,PasswordGeneration,AutofillEnableAccountWalletStorage",
+            "--password-store=basic",
+            "--disable-save-password-bubble",
         ],
     }
     if chromium_exe:
@@ -232,13 +239,26 @@ def maybe_login(page: Page, config: dict[str, Any]) -> None:
         page.evaluate("""() => {
             const user = document.getElementById('user');
             const pass = document.getElementById('password');
-            if (user) { user.disabled = false; user.readOnly = false; user.value = ''; }
-            if (pass) { pass.disabled = false; pass.readOnly = false; pass.value = ''; }
+            if (user) { user.disabled = false; user.readOnly = false; user.value = ''; user.setAttribute('autocomplete', 'off'); }
+            if (pass) { pass.disabled = false; pass.readOnly = false; pass.value = ''; pass.setAttribute('autocomplete', 'new-password'); }
         }""")
         page.wait_for_timeout(500)
         page.locator("#user").fill(username)
         page.wait_for_timeout(300)
         page.locator("#password").fill(password)
+        # Force the value through input/change events so Axon's JS sees what
+        # we typed, defeating any leftover autofill that might re-populate.
+        page.evaluate(
+            f"""(pwd) => {{
+                const p = document.getElementById('password');
+                if (p) {{
+                    p.value = pwd;
+                    p.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    p.dispatchEvent(new Event('change', {{bubbles: true}}));
+                }}
+            }}""",
+            password,
+        )
         page.wait_for_timeout(300)
         page.locator("input[type='submit'][value='Login']").click()
         page.wait_for_timeout(5000)
