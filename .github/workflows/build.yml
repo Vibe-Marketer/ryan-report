@@ -31,7 +31,7 @@ jobs:
 
       - name: Zip for release
         if: github.event_name == 'release'
-        run: Compress-Archive -Path "dist/Catom/*" -DestinationPath "dist/Catom-Windows.zip"
+        run: python -c "import shutil; shutil.make_archive('dist/Catom-Windows', 'zip', 'dist', 'Catom')"
 
       - name: Upload to release
         if: github.event_name == 'release'
