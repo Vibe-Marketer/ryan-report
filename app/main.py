@@ -522,10 +522,17 @@ class PipelineAPI:
                                 continue
                             self._log(f"[INFO] Downloading {report['name']}...")
                             try:
-                                result = run_report(page, report, downloads_dir)
-                                if result:
-                                    self._downloaded_files.append(result)
-                                    self._log(f"[OK] Downloaded {report['name']}: {result.name}")
+                                results = run_report(page, report, downloads_dir)
+                                # run_report now returns list[Path] (one entry per
+                                # `triggers_download` step). Order Master pulls 2
+                                # presets in one navigation pass.
+                                if isinstance(results, list):
+                                    for r in results:
+                                        self._downloaded_files.append(r)
+                                        self._log(f"[OK] Downloaded {report['name']}: {r.name}")
+                                elif results:
+                                    self._downloaded_files.append(results)
+                                    self._log(f"[OK] Downloaded {report['name']}: {results.name}")
                             except Exception as exc:
                                 self._log(f"[ERROR] Failed to download {report['name']}: {exc}")
                                 if mode == "download":
@@ -795,7 +802,13 @@ class PipelineAPI:
             dl_cfg = dl_load_config(Path(config))
 
             result = run_single_report(dl_cfg, report, log=self._log)
-            if result:
+            if isinstance(result, list):
+                if result:
+                    for r in result:
+                        self._log(f"[OK] Test download succeeded: {r.name}")
+                else:
+                    self._log("[OK] Test run completed (no download expected)")
+            elif result:
                 self._log(f"[OK] Test download succeeded: {result.name}")
             else:
                 self._log("[OK] Test run completed (no download expected)")

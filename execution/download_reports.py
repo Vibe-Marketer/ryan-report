@@ -412,6 +412,142 @@ def _click_button(page: Page, text: str) -> None:
     }}''')
 
 
+def _select_preset(page: Page, text: str | None = None, index: int | None = None) -> str:
+    """Open the Order Master Report's preset dropdown and select by text or index.
+
+    Axon's report screens have a 'Preset' selector adjacent to the report
+    title that switches the report layout/columns. This function tries three
+    rendering patterns in order and returns the matched display text:
+
+      1. Native <select> whose label/id/aria/name mentions 'preset'
+      2. Custom dropdown trigger button (text 'Preset', or labeled 'Presets')
+         that opens a popup with clickable options
+      3. Any visible <option>/menu item whose text matches `text`
+    """
+    if text is None and index is None:
+        raise RuntimeError("_select_preset needs either 'text' or 'index'")
+    target_text = (text or "").strip()
+    target_index = -1 if index is None else int(index)
+
+    result = page.evaluate(
+        """({targetText, targetIndex}) => {
+            const visible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden' && style.display !== 'none'
+                    && rect.width > 0 && rect.height > 0;
+            };
+            const labelText = (el) => {
+                const parts = [];
+                for (const attr of ['aria-label', 'placeholder', 'name', 'id', 'title']) {
+                    const v = el.getAttribute(attr);
+                    if (v) parts.push(v);
+                }
+                if (el.id) {
+                    const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                    if (lab) parts.push(lab.textContent || '');
+                }
+                let parent = el.parentElement;
+                for (let i = 0; parent && i < 3; i += 1, parent = parent.parentElement) {
+                    parts.push(parent.textContent || '');
+                }
+                return parts.join(' ').replace(/\\s+/g, ' ').toLowerCase();
+            };
+            const matchText = (a, b) => {
+                if (!a || !b) return false;
+                return a.toLowerCase().includes(b.toLowerCase());
+            };
+
+            // 1) Native <select> matching 'preset'
+            for (const sel of document.querySelectorAll('select')) {
+                if (!visible(sel)) continue;
+                const lbl = labelText(sel);
+                if (!lbl.includes('preset')) continue;
+                const options = Array.from(sel.options || []);
+                let chosen = -1;
+                if (targetText) {
+                    chosen = options.findIndex(o => matchText(o.textContent || '', targetText));
+                }
+                if (chosen < 0 && targetIndex >= 0 && targetIndex < options.length) {
+                    chosen = targetIndex;
+                }
+                if (chosen < 0) continue;
+                sel.selectedIndex = chosen;
+                sel.dispatchEvent(new Event('change', {bubbles: true}));
+                sel.dispatchEvent(new Event('input', {bubbles: true}));
+                return {ok: true, via: 'select', value: options[chosen].textContent || ''};
+            }
+
+            // 2) Custom dropdown trigger — find a button-like element labeled
+            //    'Preset' / 'Presets', click it, then click the matching option.
+            const triggers = Array.from(document.querySelectorAll(
+                'button, [role="button"], .su-dropdown, .preset-selector, select-button'
+            )).filter(visible);
+            const presetTrigger = triggers.find(t =>
+                /preset/i.test(t.textContent || '') || /preset/i.test(labelText(t))
+            );
+            if (presetTrigger) {
+                presetTrigger.click();
+                // Give the popup a moment to open synchronously isn't reliable in JS;
+                // we expose the trigger and then rely on a follow-up click() in Python
+                // via a separate evaluate. Return {ok: false, opened: true} so the
+                // caller can do the second click after a wait.
+                return {ok: false, opened: true, via: 'trigger', triggerText: presetTrigger.textContent || ''};
+            }
+
+            // 3) Last resort: search ALL visible options/menu items for the text
+            const items = Array.from(document.querySelectorAll(
+                'option, [role="option"], li, a, .dropdown-item, .menu-item'
+            )).filter(visible);
+            let chosen = -1;
+            if (targetText) {
+                chosen = items.findIndex(i => matchText(i.textContent || '', targetText));
+            }
+            if (chosen < 0 && targetIndex >= 0 && targetIndex < items.length) {
+                chosen = targetIndex;
+            }
+            if (chosen >= 0) {
+                items[chosen].click();
+                return {ok: true, via: 'fallback-item', value: items[chosen].textContent || ''};
+            }
+
+            return {ok: false, reason: 'No preset selector or matching option found'};
+        }""",
+        {"targetText": target_text, "targetIndex": target_index},
+    )
+    if result.get("ok"):
+        return str(result.get("value", target_text))
+    if result.get("opened"):
+        # Trigger opened a popup. Wait briefly then click the matching option.
+        page.wait_for_timeout(500)
+        result2 = page.evaluate(
+            """({targetText, targetIndex}) => {
+                const visible = (el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none'
+                        && rect.width > 0 && rect.height > 0;
+                };
+                const matchText = (a, b) => a && b && a.toLowerCase().includes(b.toLowerCase());
+                const items = Array.from(document.querySelectorAll(
+                    'option, [role="option"], li, a, .dropdown-item, .menu-item, .su-dropdown-item'
+                )).filter(visible);
+                let chosen = -1;
+                if (targetText) chosen = items.findIndex(i => matchText(i.textContent || '', targetText));
+                if (chosen < 0 && targetIndex >= 0 && targetIndex < items.length) chosen = targetIndex;
+                if (chosen < 0) return {ok: false, reason: 'Trigger opened but no matching option', candidateCount: items.length};
+                items[chosen].click();
+                return {ok: true, via: 'trigger+item', value: items[chosen].textContent || ''};
+            }""",
+            {"targetText": target_text, "targetIndex": target_index},
+        )
+        if result2.get("ok"):
+            return str(result2.get("value", target_text))
+        raise RuntimeError(f"Preset trigger opened but option click failed: {result2.get('reason')} (candidates={result2.get('candidateCount', 0)})")
+    raise RuntimeError(f"Could not select preset: {result.get('reason', 'unknown')}")
+
+
 def _set_end_date_today(page: Page, value: str | None = None) -> str:
     """Set the current report page's end/to date field to today's date.
 
@@ -511,16 +647,32 @@ def run_step(page: Page, step: dict[str, Any]) -> None:
         result = _set_end_date_today(page, value=value)
         print(f"  end date: {result}")
 
+    elif action == "select_preset":
+        text = step.get("text")
+        index = step.get("index")
+        result = _select_preset(page, text=text, index=index)
+        print(f"  preset: {result}")
+
     else:
         raise RuntimeError(f"Unsupported action: {action}")
 
     page.wait_for_timeout(wait_ms)
 
 
-def run_report(page: Page, report: dict[str, Any], downloads_dir: Path) -> Path | None:
+def run_report(page: Page, report: dict[str, Any], downloads_dir: Path) -> list[Path]:
+    """Execute a report's step sequence. Returns a list of downloaded paths
+    (one entry per `triggers_download: true` step). Empty list if nothing
+    downloaded (e.g. navigation-only).
+
+    Multiple downloads per report config are supported — each
+    `triggers_download` step opens its own `expect_download` block and the
+    pipeline continues with subsequent steps (e.g. selecting a different
+    preset and clicking Export again).
+    """
     print(f"\n--- {report['name']} ---")
     report_name = str(report.get("name", "")).lower()
     did_set_end_date = False
+    downloads: list[Path] = []
     for step in report["steps"]:
         if step.get("action") in ("set_end_date_today", "set_report_end_date_today"):
             did_set_end_date = True
@@ -535,9 +687,11 @@ def run_report(page: Page, report: dict[str, Any], downloads_dir: Path) -> Path 
             download = dl.value
             target = downloads_dir / download.suggested_filename
             download.save_as(str(target))
-            return target
+            print(f"  saved: {target.name}")
+            downloads.append(target)
+            continue
         run_step(page, step)
-    return None
+    return downloads
 
 
 def run_single_report(
