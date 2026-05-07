@@ -346,49 +346,62 @@ class PipelineAPI:
         _file_log(msg)
 
     def _append_to_xlsx(self, historical_path: str, new_rows_csv: str) -> None:
-        """Append new rows from the generated CSV to the xlsx version of the
-        historical file. If the xlsx doesn't exist yet, create it."""
-        try:
-            import csv as csv_mod
-            from openpyxl import Workbook, load_workbook
-        except ImportError:
-            self._log("[WARN] openpyxl not installed -- skipping xlsx append.")
-            return
+        """Delegate to the production carry-over appender so the GUI 'Run All'
+        path produces the same skill-quality output (25-row pagination,
+        carry-over fill, format preservation) as the daily scheduled run.
 
+        Replaces an earlier naive ws.append() loop that bypassed all of
+        execution/append_to_xlsx.py's logic and silently produced an xlsx
+        with no formatting and no sectioning.
+        """
         new_csv = Path(new_rows_csv)
         if not new_csv.exists() or new_csv.stat().st_size == 0:
             return
 
-        # Read the new rows from the generated CSV.
-        with new_csv.open("r", encoding="utf-8-sig") as f:
-            reader = csv_mod.reader(f)
-            all_rows = list(reader)
-        if len(all_rows) < 3:
-            # First 2 rows are headers, need at least 1 data row.
-            return
-        headers = all_rows[:2]
-        data_rows = all_rows[2:]
-
-        # Determine the xlsx path -- same name/location as historical but .xlsx
         hist = Path(historical_path)
-        xlsx_path = hist.with_suffix(".xlsx")
+        xlsx_path = hist if hist.suffix.lower() == ".xlsx" else hist.with_suffix(".xlsx")
 
-        if xlsx_path.exists():
-            wb = load_workbook(xlsx_path)
-            ws = wb.active
-            # Append only data rows (headers already exist).
-            for row in data_rows:
-                ws.append(row)
-            self._log(f"[OK] Appended {len(data_rows)} rows to {xlsx_path.name}")
-        else:
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Ryan Moves"
-            for row in headers + data_rows:
-                ws.append(row)
-            self._log(f"[OK] Created {xlsx_path.name} with {len(data_rows)} rows")
+        if not xlsx_path.exists():
+            self._log(
+                f"[WARN] {xlsx_path.name} not found — carry-over appender requires "
+                f"the canonical workbook to exist. Skipping append."
+            )
+            return
 
-        wb.save(xlsx_path)
+        try:
+            from execution.append_to_xlsx import _read_generated_csv, append_section
+        except ImportError as exc:
+            self._log(f"[ERROR] Could not import production appender: {exc}")
+            return
+
+        try:
+            rows = _read_generated_csv(new_csv)
+        except Exception as exc:
+            self._log(f"[ERROR] Failed to read {new_csv.name}: {exc}")
+            return
+
+        if not rows:
+            self._log("[OK] No new rows to append.")
+            return
+
+        try:
+            summary = append_section(xlsx_path, rows)
+        except RuntimeError as exc:
+            # Excel-lock or sheet-missing — surface plainly to the user.
+            self._log(f"[ERROR] {exc}")
+            return
+        except Exception as exc:
+            self._log(f"[ERROR] Append failed: {exc}")
+            return
+
+        self._log(
+            f"[OK] Appended {summary['appended']} row(s) to {xlsx_path.name} "
+            f"(carry-over: {summary['carry_over_filled']}, "
+            f"new sections: {summary['new_sections_written']}, "
+            f"skipped dupes: {summary['skipped_dupe']})"
+        )
+        for sec in summary.get("completed_sections", []):
+            self._log(f"[OK] Section completed (page {sec.get('page_number','?')}, 25 rows).")
 
     def _latest_matching_file(self, directory: Path, prefix: str) -> Path | None:
         matches = sorted(
