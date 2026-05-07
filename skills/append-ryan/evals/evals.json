@@ -1,0 +1,26 @@
+{
+  "skill_name": "append-ryan",
+  "evals": [
+    {
+      "id": 0,
+      "name": "first-time-install-defaults",
+      "prompt": "i wanna install that append-ryan task on my mac. just give me the defaults — downloads folder, 7am every morning, no email for now. lets just get it running",
+      "expected_output": "Skill walks user through minimal setup (confirm defaults), copies scripts into ~/Documents/Claude/Scheduled/append-ryan/scripts/, writes email-config.json with enabled:false, registers the scheduled task with cron '0 7 * * *' and the runtime prompt template populated with the default paths.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "install-with-email",
+      "prompt": "set up the append ryan thing. i want it to email me drafts when a section fills up. send to soren@vibeos.com from my gmail at soren.vale@gmail.com, also cc rod@catomtrucking.com. fire at 6am. assume i already have the gmail mcp installed",
+      "expected_output": "Skill collects email config (from, to, cc), writes email-config.json with enabled:true, copies scripts, registers scheduled task with cron '0 6 * * *' and the runtime prompt populated for email-enabled mode (mentions gmail draft step, references the email-config.json path).",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "manual-run-now",
+      "prompt": "how do i run the append ryan task right now without waiting til tomorrow morning? want to test it before i leave the office",
+      "expected_output": "Skill explains either (a) Cowork's 'Run now' button on the scheduled task, or (b) running the run_daily_append.py script directly with explicit args. Doesn't reinstall anything. Probably mentions the optional --dry-run flag.",
+      "files": []
+    }
+  ]
+}

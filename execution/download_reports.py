@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import platform
@@ -18,19 +19,28 @@ from playwright.sync_api import (
 )
 
 VIEWPORT = {"width": 1600, "height": 1000}
+PATH_CONFIG_KEYS = {
+    "directory",
+    "executable_path",
+    "historical_ryan",
+    "path",
+    "user_data_dir",
+}
 
 
 def load_config(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         cfg = json.load(handle)
 
-    def _expand(obj: Any) -> Any:
+    def _expand(obj: Any, key: str = "") -> Any:
         if isinstance(obj, str):
-            return os.path.expandvars(obj)
+            if key in PATH_CONFIG_KEYS:
+                return os.path.expandvars(obj)
+            return obj
         if isinstance(obj, dict):
-            return {k: _expand(v) for k, v in obj.items()}
+            return {k: _expand(v, k) for k, v in obj.items()}
         if isinstance(obj, list):
-            return [_expand(v) for v in obj]
+            return [_expand(v, key) for v in obj]
         return obj
     return _expand(cfg)
 
@@ -398,6 +408,84 @@ def _click_button(page: Page, text: str) -> None:
     }}''')
 
 
+def _set_end_date_today(page: Page, value: str | None = None) -> str:
+    """Set the current report page's end/to date field to today's date.
+
+    Axon report screens are not consistent about date input markup, so this
+    prefers fields labeled/named like end/to dates and falls back to the last
+    visible date-like input on the page.
+    """
+    display_value = value or datetime.date.today().strftime("%m/%d/%Y")
+    iso_value = datetime.datetime.strptime(display_value, "%m/%d/%Y").strftime("%Y-%m-%d")
+    result = page.evaluate(
+        """({displayValue, isoValue}) => {
+            const visible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const labelText = (el) => {
+                const parts = [];
+                for (const attr of ['aria-label', 'placeholder', 'name', 'id', 'title']) {
+                    if (el.getAttribute(attr)) parts.push(el.getAttribute(attr));
+                }
+                if (el.id) {
+                    const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                    if (label) parts.push(label.textContent || '');
+                }
+                const wrappingLabel = el.closest('label');
+                if (wrappingLabel) parts.push(wrappingLabel.textContent || '');
+                let parent = el.parentElement;
+                for (let i = 0; parent && i < 3; i += 1, parent = parent.parentElement) {
+                    parts.push(parent.textContent || '');
+                }
+                return parts.join(' ').replace(/\\s+/g, ' ').toLowerCase();
+            };
+            const dateish = Array.from(document.querySelectorAll('input'))
+                .filter((el) => {
+                    const type = (el.getAttribute('type') || 'text').toLowerCase();
+                    if (['hidden', 'button', 'submit', 'checkbox', 'radio', 'file'].includes(type)) return false;
+                    const text = labelText(el);
+                    return visible(el) && (
+                        type === 'date'
+                        || text.includes('date')
+                        || /\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}/.test(el.value || '')
+                    );
+                });
+            const preferred = dateish.filter((el) => {
+                const text = labelText(el);
+                return /\\b(end|to|through|thru|until)\\b/.test(text);
+            });
+            const target = preferred[preferred.length - 1] || dateish[dateish.length - 1];
+            if (!target) {
+                return {ok: false, reason: 'No visible date input found'};
+            }
+            const type = (target.getAttribute('type') || 'text').toLowerCase();
+            const newValue = type === 'date' ? isoValue : displayValue;
+            target.disabled = false;
+            target.readOnly = false;
+            target.focus();
+            target.value = newValue;
+            target.dispatchEvent(new Event('input', {bubbles: true}));
+            target.dispatchEvent(new Event('change', {bubbles: true}));
+            target.dispatchEvent(new Event('blur', {bubbles: true}));
+            return {
+                ok: true,
+                value: newValue,
+                matched: labelText(target).slice(0, 160),
+                candidateCount: dateish.length,
+            };
+        }""",
+        {"displayValue": display_value, "isoValue": iso_value},
+    )
+    if not result.get("ok"):
+        raise RuntimeError(f"Could not set report end date: {result.get('reason')}")
+    return str(result.get("value", display_value))
+
+
 def run_step(page: Page, step: dict[str, Any]) -> None:
     action = step["action"]
     wait_ms = step.get("wait_ms", 2000)
@@ -414,6 +502,11 @@ def run_step(page: Page, step: dict[str, Any]) -> None:
         print(f"  button: {step['text']}")
         _click_button(page, step["text"])
 
+    elif action in ("set_end_date_today", "set_report_end_date_today"):
+        value = step.get("value") or step.get("date")
+        result = _set_end_date_today(page, value=value)
+        print(f"  end date: {result}")
+
     else:
         raise RuntimeError(f"Unsupported action: {action}")
 
@@ -422,8 +515,17 @@ def run_step(page: Page, step: dict[str, Any]) -> None:
 
 def run_report(page: Page, report: dict[str, Any], downloads_dir: Path) -> Path | None:
     print(f"\n--- {report['name']} ---")
+    report_name = str(report.get("name", "")).lower()
+    did_set_end_date = False
     for step in report["steps"]:
+        if step.get("action") in ("set_end_date_today", "set_report_end_date_today"):
+            did_set_end_date = True
         if step.get("triggers_download"):
+            if report_name == "order_master" and not did_set_end_date:
+                result = _set_end_date_today(page)
+                print(f"  end date: {result}")
+                page.wait_for_timeout(500)
+                did_set_end_date = True
             with page.expect_download(timeout=step.get("timeout_ms", 60000)) as dl:
                 run_step(page, step)
             download = dl.value

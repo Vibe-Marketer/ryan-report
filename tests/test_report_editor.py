@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -161,7 +162,10 @@ class TestReportCRUD:
 class TestStepTypes:
     """Verify all v1 step types are supported."""
 
-    @pytest.mark.parametrize("action", ["click_tab", "click_menu", "click_button"])
+    @pytest.mark.parametrize(
+        "action",
+        ["click_tab", "click_menu", "click_button", "set_end_date_today"],
+    )
     def test_supported_step_types(self, api, action):
         report = {
             "name": f"type_{action}",
@@ -171,3 +175,74 @@ class TestStepTypes:
         assert result == "ok"
         detail = api.get_report_detail(f"type_{action}")
         assert detail["steps"][0]["action"] == action
+
+    def test_date_step_cannot_trigger_download(self, api):
+        report = {
+            "name": "date_step",
+            "steps": [{"action": "set_end_date_today", "triggers_download": True}],
+        }
+        api.save_report(report)
+        detail = api.get_report_detail("date_step")
+        assert detail["steps"][0]["triggers_download"] is False
+
+
+class TestConfigExpansion:
+    def test_app_load_config_preserves_password_with_dollar_signs(
+        self, tmp_path, monkeypatch
+    ):
+        config_file = tmp_path / "browser_config.json"
+        config_file.write_text(json.dumps({
+            "auth": {
+                "base_url": "https://test.axoneta.io/",
+                "username": "u",
+                "password": "secret$$",
+            },
+            "downloads": {"directory": "%USERPROFILE%\\Downloads"},
+        }))
+
+        monkeypatch.setenv("USERPROFILE", "C:\\Users\\Andrew")
+        monkeypatch.setattr("app.main.os.path.expandvars", ntpath.expandvars)
+
+        with patch("app.main._user_config_path", return_value=config_file):
+            from app.main import PipelineAPI
+            cfg = PipelineAPI().load_config()
+
+        assert cfg["auth"]["password"] == "secret$$"
+        assert cfg["downloads"]["directory"] == "C:\\Users\\Andrew\\Downloads"
+
+
+class TestSerialLookup:
+    def test_generated_lookup_seeds_historical_and_overrides_win(self):
+        from execution.build_ryan_report import build_serial_lookup
+
+        lookup = build_serial_lookup(
+            {"S1": {"description": "Seed", "meter": "1"}},
+            {"S2": {"description": "Historical", "meter": "2"}},
+            {"S1": {"description": "Override", "meter": "3"}},
+        )
+
+        assert lookup["S1"]["description"] == "Override"
+        assert lookup["S1"]["meter"] == "3"
+        assert lookup["S2"]["description"] == "Historical"
+
+    def test_download_loader_preserves_password_with_dollar_signs(
+        self, tmp_path, monkeypatch
+    ):
+        config_file = tmp_path / "browser_config.json"
+        config_file.write_text(json.dumps({
+            "auth": {
+                "base_url": "https://test.axoneta.io/",
+                "username": "u",
+                "password": "secret$$",
+            },
+            "downloads": {"directory": "%USERPROFILE%\\Downloads"},
+        }))
+
+        monkeypatch.setenv("USERPROFILE", "C:\\Users\\Andrew")
+        monkeypatch.setattr("execution.download_reports.os.path.expandvars", ntpath.expandvars)
+
+        from execution.download_reports import load_config
+        cfg = load_config(config_file)
+
+        assert cfg["auth"]["password"] == "secret$$"
+        assert cfg["downloads"]["directory"] == "C:\\Users\\Andrew\\Downloads"

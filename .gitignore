@@ -5,6 +5,8 @@ build/
 *.zip
 *.dmg
 *.pkg
+*.skill
+/2026 RYAN MOVES*.xlsx
 .env
 ${HOME}/
 temp_test_input/

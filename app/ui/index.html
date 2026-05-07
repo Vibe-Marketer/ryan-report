@@ -826,6 +826,7 @@
             { action: "click_tab", name: "Contents", wait_ms: 1000 },
             { action: "click_tab", name: "Trucking", wait_ms: 2000 },
             { action: "click_menu", text: "Order Master Report", wait_ms: 3000 },
+            { action: "set_end_date_today", wait_ms: 500 },
             { action: "click_button", text: "Export", wait_ms: 1000, triggers_download: true, timeout_ms: 180000 }
           ]
         },
@@ -1213,7 +1214,9 @@
     container.innerHTML = editorSteps.map((s, i) => {
       const isFirst = i === 0;
       const isLast = i === editorSteps.length - 1;
-      const targetField = s.action === 'click_tab'
+      const targetField = (s.action === 'set_end_date_today' || s.action === 'set_report_end_date_today')
+        ? '<div class="step-field"><label>Target</label><input type="text" value="Current end date" disabled></div>'
+        : s.action === 'click_tab'
         ? '<div class="step-field"><label>Target Name</label><input type="text" value="' + escHtml(s.name) + '" onchange="updateStep(' + i + ',\'name\',this.value)"></div>'
         : '<div class="step-field"><label>Target Text</label><input type="text" value="' + escHtml(s.text) + '" onchange="updateStep(' + i + ',\'text\',this.value)"></div>';
 
@@ -1231,6 +1234,7 @@
               '<option value="click_tab"' + (s.action === 'click_tab' ? ' selected' : '') + '>Click Tab</option>' +
               '<option value="click_menu"' + (s.action === 'click_menu' ? ' selected' : '') + '>Click Menu Item</option>' +
               '<option value="click_button"' + (s.action === 'click_button' ? ' selected' : '') + '>Click Button</option>' +
+              '<option value="set_end_date_today"' + (s.action === 'set_end_date_today' ? ' selected' : '') + '>Set End Date Today</option>' +
             '</select></div>' +
           '<div class="step-field"><label>Display Label</label><input type="text" value="' + escHtml(s.label) + '" onchange="updateStep(' + i + ',\'label\',this.value)"></div>' +
           targetField +
@@ -1295,7 +1299,9 @@
         wait_ms: s.wait_ms,
         triggers_download: s.triggers_download,
       };
-      if (s.action === 'click_tab') {
+      if (s.action === 'set_end_date_today' || s.action === 'set_report_end_date_today') {
+        step.triggers_download = false;
+      } else if (s.action === 'click_tab') {
         step.name = s.name || s.text || s.label;
       } else {
         step.text = s.text || s.name || s.label;

@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 import platform
+import shutil
 import sys
 import threading
 import time
@@ -38,6 +39,13 @@ def _ui_path() -> str:
 APP_ROOT = _app_root()
 EXECUTION = APP_ROOT / "execution"
 STATE = APP_ROOT / "state"
+PATH_CONFIG_KEYS = {
+    "directory",
+    "executable_path",
+    "historical_ryan",
+    "path",
+    "user_data_dir",
+}
 
 
 def _user_config_dir() -> Path:
@@ -94,6 +102,25 @@ def _install_excepthook() -> None:
 
 def _user_config_path() -> Path:
     return _user_config_dir() / "browser_config.json"
+
+
+def _user_state_dir() -> Path:
+    return _user_config_dir() / "state"
+
+
+def _ensure_user_state() -> Path:
+    user_state = _user_state_dir()
+    user_state.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "serial_overrides.csv",
+        "generated_serial_lookup.csv",
+        "unresolved_serials.csv",
+    ):
+        src = STATE / name
+        dest = user_state / name
+        if src.exists() and not dest.exists():
+            shutil.copy2(src, dest)
+    return user_state
 
 
 def _template_config_path() -> Path:
@@ -174,14 +201,17 @@ class PipelineAPI:
             return {}
         with source_path.open("r") as f:
             cfg = json.load(f)
-        # Expand ${HOME} etc.
-        def _exp(o: Any) -> Any:
+        # Expand ${HOME}/%USERPROFILE% only in path-like fields. On Windows,
+        # expandvars turns a literal "$$" into "$", which corrupts passwords.
+        def _exp(o: Any, key: str = "") -> Any:
             if isinstance(o, str):
-                return os.path.expandvars(o)
+                if key in PATH_CONFIG_KEYS:
+                    return os.path.expandvars(o)
+                return o
             if isinstance(o, dict):
-                return {k: _exp(v) for k, v in o.items()}
+                return {k: _exp(v, k) for k, v in o.items()}
             if isinstance(o, list):
-                return [_exp(v) for v in o]
+                return [_exp(v, key) for v in o]
             return o
         return _exp(cfg)
 
@@ -545,8 +575,7 @@ class PipelineAPI:
 
                 from execution.build_ryan_report import main as build_main
                 # State dir must be in user space (app bundle is read-only).
-                user_state = str(_user_config_dir() / "state")
-                Path(user_state).mkdir(parents=True, exist_ok=True)
+                user_state = str(_ensure_user_state())
 
                 build_args = [
                     "--input-dir", dl_dir,
@@ -680,7 +709,9 @@ class PipelineAPI:
             step.setdefault("wait_ms", 1000)
             step.setdefault("triggers_download", False)
             # Ensure 'name' or 'text' target field exists
-            if step["action"] == "click_tab":
+            if step["action"] in ("set_end_date_today", "set_report_end_date_today"):
+                step["triggers_download"] = False
+            elif step["action"] == "click_tab":
                 step.setdefault("name", step.get("text", ""))
             else:
                 step.setdefault("text", step.get("name", ""))
@@ -781,7 +812,9 @@ class PipelineAPI:
         return files
 
     def get_unresolved_serials(self) -> list[dict]:
-        p = STATE / "unresolved_serials.csv"
+        p = _user_state_dir() / "unresolved_serials.csv"
+        if not p.exists():
+            p = STATE / "unresolved_serials.csv"
         if not p.exists():
             return []
         import csv

@@ -34,6 +34,7 @@
         { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
         { "action": "click_tab", "name": "Trucking", "wait_ms": 2000 },
         { "action": "click_menu", "text": "Order Master Report", "wait_ms": 3000 },
+        { "action": "set_end_date_today", "wait_ms": 500 },
         { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 180000 }
       ]
     },
