@@ -330,11 +330,11 @@ def maybe_login(page: Page, config: dict[str, Any]) -> None:
 
     # Not on dashboard — likely 2FA or verification code needed.
     # The browser is visible. Tell the user to enter the code there.
+    timeout_seconds = int(auth.get("manual_login_timeout_seconds", 300))
     print("[INFO] A verification code may be required.")
     print("[INFO] Check your email for the code and enter it in the browser window.")
-    print("[INFO] Waiting up to 3 minutes for you to complete login...")
+    print(f"[INFO] Waiting up to {timeout_seconds // 60} minutes for you to complete login...")
 
-    timeout_seconds = int(auth.get("manual_login_timeout_seconds", 180))
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         page.wait_for_timeout(2000)

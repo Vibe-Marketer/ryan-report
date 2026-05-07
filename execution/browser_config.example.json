@@ -10,7 +10,7 @@
     "base_url": "https://catom.axoneta.io/",
     "username": "",
     "password": "",
-    "manual_login_timeout_seconds": 180
+    "manual_login_timeout_seconds": 300
   },
   "downloads": {
     "directory": ""
