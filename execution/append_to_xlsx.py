@@ -347,7 +347,15 @@ def _write_template_padding_row(ws, row_idx: int, line_no: int) -> None:
 
 def _write_new_section_preamble(ws, start_row: int, page_number: int) -> int:
     """Write a 3-row preamble (page-footer + banner + contact). Returns the
-    row immediately after the preamble (where data lines should begin)."""
+    row immediately after the preamble (where data lines should begin).
+
+    Defensive: explicitly nulls every column in each preamble row before
+    writing the small handful of values we actually want, so this can never
+    inherit garbage from a recycled cell. The historical xlsx had pages
+    with stale paste-typo strings (e.g. an email-and-job# concat) leaking
+    into col I of every page-footer row; this guarantees future writes
+    won't reintroduce that.
+    """
     preamble = [
         (TPL_PAGE,    [(1, EMAIL_TEXT), (8, f"PAGE:  {page_number:02d}  OF   2026")]),
         (TPL_BANNER,  [(1, BANNER_TEXT)]),
@@ -356,10 +364,9 @@ def _write_new_section_preamble(ws, start_row: int, page_number: int) -> int:
     cur = start_row
     for tpl_row, values in preamble:
         for col in range(1, NUM_COLS + 1):
-            _copy_style(
-                ws.cell(row=tpl_row, column=col),
-                ws.cell(row=cur, column=col),
-            )
+            cell = ws.cell(row=cur, column=col)
+            _copy_style(ws.cell(row=tpl_row, column=col), cell)
+            cell.value = None  # clear before assigning, no garbage carry-over
         for col, val in values:
             ws.cell(row=cur, column=col).value = val
         ws.row_dimensions[cur].height = (

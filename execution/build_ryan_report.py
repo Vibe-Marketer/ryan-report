@@ -250,6 +250,47 @@ def parse_order_master(path: Path) -> dict[str, OrderMasterRecord]:
     return records
 
 
+def normalize_location(value: str) -> str:
+    """Stopgap From/To formatter.
+
+    Customer wants `<job#>-<CITY>` (e.g. `2503.2-HOFFMAN ESTATES`). Until the
+    Distribution PDF parser ships the asset->job# crosswalk, strip the trailing
+    state code (`, IL` / `, WI`) and uppercase. So Axon's `"HOFFMAN ESTATES, IL"`
+    becomes `"HOFFMAN ESTATES"` instead of being shipped to the customer with
+    state codes that no other row has. The job# prefix gets added back when
+    the Distribution PDF lookup lands.
+    """
+    s = normalize_space(value or "")
+    if not s:
+        return ""
+    # Strip trailing ", ST" (2-letter state) — match real Axon output.
+    s = re.sub(r",\s*[A-Z]{2}\s*$", "", s, flags=re.IGNORECASE)
+    return s.upper()
+
+
+def parse_historical_orders(path: Path) -> dict[str, tuple[str, str]]:
+    """Build Order# -> (from_str, to_str) crosswalk from the historical xlsx.
+
+    Reads every year-sheet and records the From/To values seen for each
+    Order#. Used as the primary lookup for From/To formatting — when a
+    repeat order shows up in Axon, we use the exact From/To string Eric
+    has used historically (which already has the `<job#>-<CITY>` format).
+    Falls back to normalize_location() for orders not seen historically.
+    """
+    crosswalk: dict[str, tuple[str, str]] = {}
+    rows = read_historical_rows(path)
+    for row in rows:
+        padded = row + [""] * 11
+        order = normalize_space(padded[10])
+        if not order.isdigit():
+            continue
+        from_v = normalize_space(padded[8])
+        to_v = normalize_space(padded[9])
+        if from_v or to_v:
+            crosswalk[order] = (from_v, to_v)
+    return crosswalk
+
+
 def parse_historical_ryan(path: Path) -> tuple[dict[str, dict[str, str]], Counter[str]]:
     rows = read_historical_rows(path)
     description_counts = defaultdict(Counter)
@@ -344,9 +385,11 @@ def collect_generated_rows(
     new_rows: list[dict[str, str]],
     order_master: dict[str, OrderMasterRecord],
     serial_lookup: dict[str, dict[str, str]],
+    order_crosswalk: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[list[GeneratedRow], list[dict[str, str]]]:
     generated = []
     unresolved = []
+    crosswalk = order_crosswalk or {}
     for row in new_rows:
         if normalize_space(row.get("Bill To Name", "")) != "Ryan, Inc.":
             continue
@@ -356,6 +399,18 @@ def collect_generated_rows(
         master = order_master.get(order_number)
         if not master:
             continue
+
+        # From/To formatting: prefer the historical crosswalk (gives correct
+        # <job#>-<CITY> for repeat orders); fall back to a state-stripped,
+        # uppercase city for brand-new orders. Until the Distribution PDF
+        # parser lands, this is the best we can do without manual entry.
+        cw = crosswalk.get(order_number)
+        if cw and (cw[0] or cw[1]):
+            from_str, to_str = cw
+        else:
+            from_str = normalize_location(master.origin)
+            to_str = normalize_location(master.destination)
+
         for index, column in enumerate(SERIAL_COLUMNS):
             serial = normalize_serial(row.get(column, ""))
             if not serial:
@@ -381,8 +436,8 @@ def collect_generated_rows(
                     serial,
                     meter,
                     description,
-                    master.origin,
-                    master.destination,
+                    from_str,
+                    to_str,
                     order_number,
                 )
             )
@@ -574,13 +629,14 @@ def main() -> None:
     order_master = parse_order_master(order_master_path)
     new_rows = parse_new_ryan(new_ryan_path)
     historical_lookup, historical_freq = parse_historical_ryan(historical_path)
+    order_crosswalk = parse_historical_orders(historical_path)
     serial_lookup = build_serial_lookup(
         parse_overrides(state_dir / "generated_serial_lookup.csv"),
         historical_lookup,
         parse_overrides(state_dir / "serial_overrides.csv"),
     )
     generated_rows, unresolved = collect_generated_rows(
-        new_rows, order_master, serial_lookup
+        new_rows, order_master, serial_lookup, order_crosswalk
     )
 
     skipped_existing_orders = 0
