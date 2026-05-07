@@ -268,6 +268,98 @@ def normalize_location(value: str) -> str:
     return s.upper()
 
 
+def parse_distribution_pdf(pdf_path: Path) -> dict[str, str]:
+    """Parse Ryan's RIC EM Distribution Report PDF -> {asset: '<job>-<CITY>'}.
+
+    Each Job/Location section header gives the job# + city. Asset rows under
+    that section ('NN-NNNNN  description  vin...') get mapped to that section
+    until the next header. The consolidated index pages at the end of the PDF
+    use a different layout and are skipped — front-of-doc regional listings
+    are sufficient.
+
+    Returns a flat dict where the value is already in '<job>-<CITY>' or shop
+    label form, ready to drop into From/To.
+    """
+    import re as _re
+    import subprocess as _sp
+
+    if not pdf_path.exists():
+        return {}
+    try:
+        proc = _sp.run(
+            ["pdftotext", "-layout", str(pdf_path), "-"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (FileNotFoundError, _sp.TimeoutExpired):
+        return {}
+    if proc.returncode != 0:
+        return {}
+
+    text = proc.stdout
+    lines = text.splitlines()
+
+    # Detect where the consolidated 2-column index begins; only parse before it.
+    index_line = _re.compile(
+        r'^\s*\d+\s*-\s*\d+\s+\S.*\s\d{3,5}(?:\.\d)?-\s+\d+\s*-\s*\d+\s+'
+    )
+    index_start = next(
+        (i for i, l in enumerate(lines) if index_line.match(l)),
+        len(lines),
+    )
+
+    job_hdr = _re.compile(
+        r'^Job:\s+(\d+(?:\.\d+)?)-\s*(.+?),\s*([A-Z]{2})(?:\b|\s)'
+    )
+    loc_hdr = _re.compile(r'^Location:\s+(.+)')
+    cont_re = _re.compile(r'\s*-\s*Continued\s*$')
+    asset_re = _re.compile(r'^(\d{1,3})\s*-\s*(\d{3,5})\b')
+
+    result: dict[str, str] = {}
+    current: str | None = None
+    for ln in range(index_start):
+        line = lines[ln].strip()
+        if not line:
+            continue
+        m = job_hdr.match(line)
+        if m:
+            body = cont_re.sub("", m.group(2)).strip()
+            city = body.rsplit(' - ', 1)[-1] if ' - ' in body else body
+            current = f"{m.group(1)}-{city.strip().upper()}"
+            continue
+        m = loc_hdr.match(line)
+        if m:
+            head = cont_re.sub("", m.group(1)).split(',')[0].strip()
+            current = _re.sub(r'\s*-\s*', '-', head).upper()
+            continue
+        if current is None:
+            continue
+        m_a = asset_re.match(line)
+        if m_a:
+            asset = f"{m_a.group(1)}-{m_a.group(2)}"
+            # First mapping wins (regional pages); index pages were skipped.
+            if asset not in result:
+                result[asset] = current
+    return result
+
+
+def discover_distribution_pdf(input_dir: Path) -> Path | None:
+    """Find the newest RIC EM Distribution Report PDF in the source folder.
+
+    Eric drops the PDF into the SAME folder as the Axon CSVs (no separate
+    folder). We pick the newest by mtime; older PDFs are kept for diff-based
+    From-side resolution in a future phase.
+    """
+    if not input_dir.is_dir():
+        return None
+    candidates = sorted(
+        list(input_dir.glob("Equipment Distribution Report*.pdf"))
+        + list(input_dir.glob("RIC EM Distribution*.pdf")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
 def parse_historical_orders(path: Path) -> dict[str, tuple[str, str]]:
     """Build Order# -> (from_str, to_str) crosswalk from the historical xlsx.
 
@@ -386,10 +478,12 @@ def collect_generated_rows(
     order_master: dict[str, OrderMasterRecord],
     serial_lookup: dict[str, dict[str, str]],
     order_crosswalk: dict[str, tuple[str, str]] | None = None,
+    distribution_lookup: dict[str, str] | None = None,
 ) -> tuple[list[GeneratedRow], list[dict[str, str]]]:
     generated = []
     unresolved = []
     crosswalk = order_crosswalk or {}
+    pdf_lookup = distribution_lookup or {}
     for row in new_rows:
         if normalize_space(row.get("Bill To Name", "")) != "Ryan, Inc.":
             continue
@@ -400,16 +494,20 @@ def collect_generated_rows(
         if not master:
             continue
 
-        # From/To formatting: prefer the historical crosswalk (gives correct
-        # <job#>-<CITY> for repeat orders); fall back to a state-stripped,
-        # uppercase city for brand-new orders. Until the Distribution PDF
-        # parser lands, this is the best we can do without manual entry.
+        # From/To resolution chain:
+        #   1. Historical crosswalk (repeat orders -> exact <job>-<CITY> Eric used)
+        #   2. Distribution-PDF lookup by asset (asset's current job assignment)
+        #   3. Stopgap: state-stripped uppercase city
+        # PDF lookup is asset-specific, so it happens inside the SERIAL loop.
+        # Order-level crosswalk takes precedence — it's been hand-validated.
         cw = crosswalk.get(order_number)
         if cw and (cw[0] or cw[1]):
-            from_str, to_str = cw
+            order_from, order_to = cw
+            order_resolved = True
         else:
-            from_str = normalize_location(master.origin)
-            to_str = normalize_location(master.destination)
+            order_from = normalize_location(master.origin)
+            order_to = normalize_location(master.destination)
+            order_resolved = False
 
         for index, column in enumerate(SERIAL_COLUMNS):
             serial = normalize_serial(row.get(column, ""))
@@ -428,6 +526,25 @@ def collect_generated_rows(
                     }
                 )
                 continue
+
+            # PDF lookup — the asset's job# assignment per the latest
+            # Distribution Report. Used only when crosswalk didn't resolve
+            # (so we don't override Eric's hand-validated history). For new
+            # orders, this gives us the <job>-<CITY> format for free.
+            if order_resolved:
+                from_str, to_str = order_from, order_to
+            else:
+                pdf_value = pdf_lookup.get(serial)
+                if pdf_value:
+                    # Asset is at job X per PDF. For now, use the same
+                    # PDF value for both From and To (single-PDF case).
+                    # Multi-PDF diff for distinct From vs To is a follow-up.
+                    from_str = pdf_value
+                    to_str = pdf_value
+                else:
+                    from_str = order_from
+                    to_str = order_to
+
             generated.append(
                 GeneratedRow(
                     normalize_space(row.get("Customer PO#", "")),
@@ -600,6 +717,9 @@ def main() -> None:
     parser.add_argument("--order-master")
     parser.add_argument("--new-ryan")
     parser.add_argument("--historical-ryan")
+    parser.add_argument("--distribution-pdf",
+        help="Path to Ryan's RIC EM Distribution Report PDF. If omitted, "
+             "auto-discovered as the newest matching PDF in --input-dir.")
     parser.add_argument("--state-dir")
     args = parser.parse_args()
 
@@ -630,13 +750,32 @@ def main() -> None:
     new_rows = parse_new_ryan(new_ryan_path)
     historical_lookup, historical_freq = parse_historical_ryan(historical_path)
     order_crosswalk = parse_historical_orders(historical_path)
+
+    # Distribution PDF: explicit path > auto-discovered in input_dir > none
+    distribution_pdf_path: Path | None = None
+    if args.distribution_pdf:
+        distribution_pdf_path = Path(args.distribution_pdf)
+    else:
+        distribution_pdf_path = discover_distribution_pdf(input_dir)
+    distribution_lookup = (
+        parse_distribution_pdf(distribution_pdf_path)
+        if distribution_pdf_path
+        else {}
+    )
+    if distribution_pdf_path:
+        print(
+            f"[INFO] Distribution PDF: {distribution_pdf_path.name} "
+            f"({len(distribution_lookup)} assets mapped)"
+        )
+
     serial_lookup = build_serial_lookup(
         parse_overrides(state_dir / "generated_serial_lookup.csv"),
         historical_lookup,
         parse_overrides(state_dir / "serial_overrides.csv"),
     )
     generated_rows, unresolved = collect_generated_rows(
-        new_rows, order_master, serial_lookup, order_crosswalk
+        new_rows, order_master, serial_lookup,
+        order_crosswalk, distribution_lookup,
     )
 
     skipped_existing_orders = 0
