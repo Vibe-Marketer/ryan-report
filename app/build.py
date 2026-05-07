@@ -345,6 +345,10 @@ def build(debug: bool = False) -> None:
         "playwright", "playwright.sync_api", "playwright._impl",
         "playwright._impl._browser_type", "playwright._impl._connection",
         "openpyxl",
+        # pdfplumber for the Distribution Report parsing. Without these the
+        # PyInstaller bundle silently lacks PDF support on Windows because
+        # there's no system pdftotext binary to fall back to.
+        "pdfplumber", "pdfminer", "pdfminer.six", "pdfminer.high_level",
     ]
     for imp in hidden:
         cmd.extend(["--hidden-import", imp])

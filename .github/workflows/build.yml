@@ -17,7 +17,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pywebview pyinstaller playwright pillow
+          pip install pywebview pyinstaller playwright pillow pdfplumber
           python -m playwright install chromium
 
       - name: Build Windows exe
@@ -50,7 +50,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pywebview pyinstaller playwright pillow
+          pip install pywebview pyinstaller playwright pillow pdfplumber
           python -m playwright install chromium
 
       - name: Build macOS app
