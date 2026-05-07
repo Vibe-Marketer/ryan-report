@@ -223,10 +223,14 @@ def _detect_2fa_prompt(page: Page) -> bool:
 
 
 def _on_dashboard(page: Page) -> bool:
-    return (
-        page.locator("text=Trucking").count() > 0
-        or page.locator("text=Catom Trucking Inc").count() > 0
-    )
+    # Check for the post-login tab bar element rather than branding text:
+    # words like "Trucking" / "Catom Trucking Inc" appear on the login and
+    # 2FA screens too (page chrome, footer), causing maybe_login() to
+    # return immediately and the browser to close before the user can
+    # complete 2FA. The su-tab-text class only renders after auth.
+    if _detect_2fa_prompt(page):
+        return False
+    return page.locator("div.su-tab-text").count() > 0
 
 
 def _pw_fp(pw: str) -> str:
