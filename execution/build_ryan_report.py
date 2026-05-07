@@ -63,7 +63,7 @@ class OrderMasterRecord:
 @dataclass
 class GeneratedRow:
     po: str
-    driver_initials: str
+    driver_initials: str  # Truck column (e.g. 'RH' from driver 'Hendrickson, Rod')
     move_date: str
     machine: str
     meter: str
@@ -71,6 +71,7 @@ class GeneratedRow:
     origin: str
     destination: str
     order_number: str
+    by_whom: str = "DR"  # By Whom column — initials of the Ryan dispatcher who called the order in
 
 
 def read_csv_rows(path: Path) -> list[list[str]]:
@@ -417,6 +418,268 @@ def parse_historical_ryan(path: Path) -> tuple[dict[str, dict[str, str]], Counte
     return lookup, Counter({s: sum(c.values()) for s, c in description_counts.items()})
 
 
+def derive_called_initials(called: str) -> str:
+    """Extract initials from Summary's 'Called' field.
+
+    The field looks like 'Doug Reibel 815-405-8273' — strip the phone trailing
+    portion, then return first-letter-of-first-name + first-letter-of-last-name.
+    'Doug Reibel ...' -> 'DR'. Falls back to 'DR' (Eric's most common dispatcher,
+    matches historical pattern) if parsing fails.
+    """
+    s = normalize_space(called)
+    if not s:
+        return ""
+    # Strip a trailing phone number like '815-405-8273' or '(815) 405-8273'
+    s = re.sub(r'\s*[\(\d][\d\-\)\.\s]{6,}\d\s*$', '', s).strip()
+    if not s:
+        return ""
+    parts = s.split()
+    if len(parts) >= 2:
+        return (parts[0][:1] + parts[-1][:1]).upper()
+    return parts[0][:2].upper() if parts else ""
+
+
+def format_from_to(text: str, city: str, customer_job_fallback: str = "") -> str:
+    """Build the Ryan-format From/To column value from a Shipper or Consignee
+    free-text field plus its City field.
+
+    Single rule:
+      - If the text starts with `<digits>(.<digits>)?` -> '<digits>-<UPPER CITY>'
+      - Else if customer_job_fallback starts with digits and Consignee text didn't,
+        use that prefix.
+      - Else (shop name like 'RYAN SHOP', 'MACHOLLS', 'ALTORFER MOKENA') ->
+        '<UPPER text>-<UPPER city>'.
+    """
+    text = normalize_space(text)
+    city = normalize_space(city).upper()
+    if not text and not city:
+        # Last-resort fallback: use the customer_job alone if present.
+        cj = normalize_space(customer_job_fallback)
+        return cj.upper()
+    if not text:
+        cj = normalize_space(customer_job_fallback)
+        if cj:
+            m = re.match(r'^(\d+(?:\.\d+)?)', cj)
+            if m and city:
+                return f"{m.group(1)}-{city}"
+        return city
+    # Try to extract a leading job# (e.g. '2560.2', '3416.2', '1919', '31100').
+    m = re.match(r'^(\d+(?:\.\d+)?)', text)
+    if m:
+        return f"{m.group(1)}-{city}" if city else m.group(1)
+    # No job# in the text. Try the customer_job fallback.
+    cj = normalize_space(customer_job_fallback)
+    cj_match = re.match(r'^(\d+(?:\.\d+)?)', cj)
+    if cj_match:
+        return f"{cj_match.group(1)}-{city}" if city else cj_match.group(1)
+    # Shop / yard name. Just upper-case the text + city.
+    return f"{text.upper()}-{city}" if city else text.upper()
+
+
+def classify_order_master_csv(path: Path) -> str:
+    """Sniff an Order Master Report CSV. Returns 'summary', 'detail', or 'unknown'.
+
+    Both presets export with the same filename prefix; we tell them apart by
+    looking at the layout marker row near the top:
+      - Detail preset:  contains a row with 'Detail' as the only non-empty cell
+      - Summary preset: contains a row with 'Summary Per Order'
+    Or by the header row that follows: Detail starts with 'Order#', Summary
+    starts with 'PO#'.
+    """
+    try:
+        rows = read_csv_rows(path)
+    except Exception:
+        return "unknown"
+    for row in rows[:12]:
+        joined = "|".join(normalize_space(c) for c in row).lower()
+        if "summary per order" in joined or "po#|called|" in joined:
+            return "summary"
+        if "|detail|" in f"|{joined}|" or joined.startswith("order#|end date|"):
+            return "detail"
+    return "unknown"
+
+
+def discover_order_master_pair(input_dir: Path) -> tuple[Path | None, Path | None]:
+    """Find the newest Detail + Summary CSV pair in input_dir.
+
+    Returns (detail_path, summary_path). Either can be None if not present.
+    """
+    if not input_dir.is_dir():
+        return None, None
+    candidates = sorted(
+        input_dir.glob(f"{ORDER_MASTER_NAME}*.csv"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    detail: Path | None = None
+    summary: Path | None = None
+    for c in candidates:
+        kind = classify_order_master_csv(c)
+        if kind == "detail" and detail is None:
+            detail = c
+        elif kind == "summary" and summary is None:
+            summary = c
+        if detail and summary:
+            break
+    return detail, summary
+
+
+def parse_order_master_detail_drivers(path: Path) -> dict[str, str]:
+    """Read the Detail report (115229-style) and return {Order#: driver_name}.
+
+    The Detail layout's column 4 'Equipment/Employee' carries the driver name
+    (e.g. 'Hendrickson, Rod') on the order's primary row. We only need the
+    driver -> initials translation for the Truck column of the output xlsx;
+    everything else now comes from the Summary report.
+    """
+    rows = read_csv_rows(path)
+    drivers: dict[str, str] = {}
+    # Find the column-header row.
+    start_index = None
+    for i, row in enumerate(rows):
+        if row and normalize_space(row[0]) == "Order#":
+            start_index = i + 1
+            break
+    if start_index is None:
+        return drivers
+    for row in rows[start_index:]:
+        padded = row + [""] * (10 - len(row))
+        first = normalize_space(padded[0])
+        if first.isdigit():
+            employee = normalize_space(padded[4])
+            # Skip non-driver entries (some rows show 'Total Billed' etc).
+            if employee and "," in employee:
+                drivers[first] = employee
+    return drivers
+
+
+def parse_order_master_summary(
+    path: Path,
+    drivers: dict[str, str] | None = None,
+    serial_lookup: dict[str, dict[str, str]] | None = None,
+    distribution_lookup: dict[str, str] | None = None,
+) -> tuple[list[GeneratedRow], list[dict[str, str]]]:
+    """Parse the Order Master Summary report (115319-style) into GeneratedRow.
+
+    Header layout:
+        PO#, Called, Order Start Date, Serial #, Serial #2, Serial #3, Serial #4,
+        Hour Meter, Shipper, Shipper City, Consignee, Consignee City,
+        Customer Job #, Order#, Ready To Invoice
+
+    For each order: serial #1 produces a row with Hour Meter populated; serials
+    #2/3/4 (when present) produce additional rows with the same Order#, From,
+    To, etc. but a blank Hour Meter (per Eric's pattern: bucket / attachment
+    rows have no meter).
+    """
+    drivers = drivers or {}
+    serial_lookup = serial_lookup or {}
+    distribution_lookup = distribution_lookup or {}
+
+    rows = read_csv_rows(path)
+    # Locate the column-header row (starts with 'PO#').
+    start_index = None
+    for i, row in enumerate(rows):
+        if row and normalize_space(row[0]) == "PO#":
+            start_index = i + 1
+            break
+    if start_index is None:
+        return [], []
+
+    generated: list[GeneratedRow] = []
+    unresolved: list[dict[str, str]] = []
+    current_date = ""
+
+    for row in rows[start_index:]:
+        padded = row + [""] * (15 - len(row))
+        # Single-cell rows in the Summary export are date sub-headers like
+        # '04/27/2026' that group orders under that move date.
+        first = normalize_space(padded[0])
+        # If this is a single-column date header line, latch it.
+        non_empty = [normalize_space(v) for v in padded if normalize_space(v)]
+        if len(non_empty) == 1 and re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', non_empty[0]):
+            current_date = non_empty[0]
+            continue
+
+        order_number = normalize_space(padded[13])
+        if not order_number.isdigit():
+            continue
+
+        po = normalize_space(padded[0])
+        called = normalize_space(padded[1])
+        date_field = normalize_space(padded[2]) or current_date
+        serials = [
+            normalize_serial(padded[3]),
+            normalize_serial(padded[4]),
+            normalize_serial(padded[5]),
+            normalize_serial(padded[6]),
+        ]
+        hour_meter_raw = normalize_space(padded[7])
+        shipper = normalize_space(padded[8])
+        shipper_city = normalize_space(padded[9])
+        consignee = normalize_space(padded[10])
+        consignee_city = normalize_space(padded[11])
+        customer_job = normalize_space(padded[12])
+
+        # Format the From/To once per order.
+        from_str = format_from_to(shipper, shipper_city)
+        to_str = format_from_to(consignee, consignee_city, customer_job_fallback=customer_job)
+
+        # Date: the Summary writes '04/27/2026'; format_move_date converts to '27-Apr'.
+        move_date = format_move_date(date_field) if date_field else ""
+
+        # Hour meter — first serial only. '4 hours', '1620', '2411', '0', 'N/A'.
+        first_meter = normalize_meter(hour_meter_raw)
+
+        # Driver initials from the Detail report cross-reference.
+        driver_initials = derive_driver_initials(drivers.get(order_number, ""))
+
+        # By Whom column comes from Summary's 'Called' field.
+        by_whom = derive_called_initials(called)
+
+        # PO column stays blank per Eric's spec — Ryan fills it in later.
+        # (We still expose the Summary's PO# as a separate field if a future
+        # caller wants it; we just don't put it in the output.)
+
+        for idx, serial in enumerate(serials):
+            if not serial:
+                continue
+            # Description: historical xlsx primary; PDF fallback for new assets.
+            desc_entry = serial_lookup.get(serial, {})
+            description = desc_entry.get("description", "")
+            if not description and serial in distribution_lookup:
+                # PDF fallback — distribution_lookup may map to a job-city OR
+                # description string depending on future schema. Today it's
+                # job-city; we leave description blank if we don't have a real
+                # description (better than mislabeling).
+                pass
+            if not description:
+                unresolved.append({
+                    "order_number": order_number,
+                    "serial": serial,
+                    "source_column": SERIAL_COLUMNS[idx] if idx < len(SERIAL_COLUMNS) else f"Serial#{idx+1}",
+                    "issue": "Missing description",
+                    "suggested_description": "",
+                })
+                # Skip rows without a description — matches the legacy
+                # behavior in collect_generated_rows.
+                continue
+
+            generated.append(GeneratedRow(
+                po="",  # blank per spec — Ryan fills this in after receiving the report
+                driver_initials=driver_initials,  # Truck column (e.g. 'RH')
+                move_date=move_date,
+                machine=serial,
+                meter=(first_meter if idx == 0 else "N/A"),
+                description=description,
+                origin=from_str,
+                destination=to_str,
+                order_number=order_number,
+                by_whom=by_whom or "DR",
+            ))
+
+    return generated, unresolved
+
+
 def parse_overrides(path: Path) -> dict[str, dict[str, str]]:
     if not path.exists():
         return {}
@@ -623,7 +886,7 @@ def write_target_csv(path: Path, generated_rows: Iterable[GeneratedRow]) -> None
                     idx,
                     row.driver_initials,
                     row.po,
-                    "DR",
+                    row.by_whom or "DR",
                     row.move_date,
                     row.machine,
                     row.meter,
@@ -736,28 +999,22 @@ def main() -> None:
         state_dir = Path(__file__).resolve().parents[1] / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    order_master_path = (
-        Path(args.order_master)
-        if args.order_master
-        else discover_latest_file(input_dir, ORDER_MASTER_NAME)
-    )
-    new_ryan_path = (
-        Path(args.new_ryan)
-        if args.new_ryan
-        else discover_latest_file(input_dir, NEW_RYAN_NAME)
-    )
     historical_path = (
         Path(args.historical_ryan)
         if args.historical_ryan
         else input_dir / "2026 RYAN MOVES.csv"
     )
-
-    order_master = parse_order_master(order_master_path)
-    new_rows = parse_new_ryan(new_ryan_path)
     historical_lookup, historical_freq = parse_historical_ryan(historical_path)
     order_crosswalk = parse_historical_orders(historical_path)
 
-    # Distribution PDF: explicit path > auto-discovered in input_dir > none
+    serial_lookup = build_serial_lookup(
+        parse_overrides(state_dir / "generated_serial_lookup.csv"),
+        historical_lookup,
+        parse_overrides(state_dir / "serial_overrides.csv"),
+    )
+
+    # Distribution PDF: explicit path > auto-discovered in input_dir > none.
+    # Used as fallback for equipment description on serials missing from history.
     distribution_pdf_path: Path | None = None
     if args.distribution_pdf:
         distribution_pdf_path = Path(args.distribution_pdf)
@@ -774,15 +1031,52 @@ def main() -> None:
             f"({len(distribution_lookup)} assets mapped)"
         )
 
-    serial_lookup = build_serial_lookup(
-        parse_overrides(state_dir / "generated_serial_lookup.csv"),
-        historical_lookup,
-        parse_overrides(state_dir / "serial_overrides.csv"),
-    )
-    generated_rows, unresolved = collect_generated_rows(
-        new_rows, order_master, serial_lookup,
-        order_crosswalk, distribution_lookup,
-    )
+    # Primary path (new): Order Master Detail + Summary presets.
+    # Fallback (legacy): Order Master Report (single export) + New RYAN.
+    detail_path, summary_path = discover_order_master_pair(input_dir)
+    if args.order_master:
+        # Explicit path overrides discovery; assume it's a Summary export
+        # if its content matches; else fall back to legacy parser.
+        explicit = Path(args.order_master)
+        kind = classify_order_master_csv(explicit)
+        if kind == "summary":
+            summary_path = explicit
+        else:
+            detail_path = explicit
+
+    if summary_path is not None:
+        # NEW path: build straight from the Summary report (Shipper/Consignee
+        # already include the job#, Customer Job # is the destination fallback,
+        # serials #1-4 expand to multiple rows in-function).
+        drivers: dict[str, str] = {}
+        if detail_path is not None:
+            drivers = parse_order_master_detail_drivers(detail_path)
+        print(f"[INFO] Using Summary path: {summary_path.name}"
+              + (f" + Detail: {detail_path.name}" if detail_path else " (no Detail — Truck column will be blank)"))
+        generated_rows, unresolved = parse_order_master_summary(
+            summary_path,
+            drivers=drivers,
+            serial_lookup=serial_lookup,
+            distribution_lookup=distribution_lookup,
+        )
+    else:
+        # LEGACY path: Detail + New RYAN
+        order_master_path = (
+            Path(args.order_master)
+            if args.order_master
+            else discover_latest_file(input_dir, ORDER_MASTER_NAME)
+        )
+        new_ryan_path = (
+            Path(args.new_ryan)
+            if args.new_ryan
+            else discover_latest_file(input_dir, NEW_RYAN_NAME)
+        )
+        order_master = parse_order_master(order_master_path)
+        new_rows = parse_new_ryan(new_ryan_path)
+        generated_rows, unresolved = collect_generated_rows(
+            new_rows, order_master, serial_lookup,
+            order_crosswalk, distribution_lookup,
+        )
 
     skipped_existing_orders = 0
     if args.append_to and args.only_new_orders:
