@@ -19,6 +19,16 @@ from typing import Any
 
 import webview
 
+# Updater module — auto-update polls a JSON feed and runs the new NSIS
+# installer silently. Importable both as `app.updater` (dev) and `updater`
+# (frozen build) — the inner module handles the dual import.
+try:
+    from app import updater  # type: ignore
+    from app.__version__ import __version__  # type: ignore
+except ImportError:
+    import updater  # type: ignore
+    from __version__ import __version__  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Path resolution -- works both in dev and when frozen by PyInstaller.
@@ -130,6 +140,129 @@ def _template_config_path() -> Path:
     return EXECUTION / "browser_config.json"
 
 
+# ---------------------------------------------------------------------------
+# Managed pipeline folders -- all under %APPDATA%\Catom\ on Windows so we
+# never ask the user where things go and we always know where to find them
+# for the feedback bundle.
+# ---------------------------------------------------------------------------
+
+DISTRIBUTION_PDF_URL = "https://updates.aisimple.co/catom/distribution.pdf"
+
+
+def _managed_downloads_dir() -> Path:
+    p = _user_config_dir() / "downloads"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _managed_distribution_dir() -> Path:
+    p = _user_config_dir() / "distribution"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _managed_last_run_dir() -> Path:
+    p = _user_config_dir() / "last_run"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _managed_feedback_dir() -> Path:
+    p = _user_config_dir() / "feedback"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _distribution_pdf_path() -> Path:
+    return _managed_distribution_dir() / "distribution.pdf"
+
+
+def _ensure_distribution_pdf(force: bool = False) -> Path | None:
+    """Fetch the canonical Distribution PDF from R2 if we don't have it.
+
+    Lazy: only downloads if missing or `force=True`. Returns the path on success,
+    None on failure (network down etc.) — the pipeline can keep running without
+    the PDF, it just loses asset->job# crosswalk for new assets.
+    """
+    dest = _distribution_pdf_path()
+    if dest.exists() and not force:
+        return dest
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            DISTRIBUTION_PDF_URL,
+            headers={"User-Agent": f"Catom/{__version__}"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        dest.write_bytes(data)
+        _file_log(f"[INFO] Distribution PDF fetched ({len(data)} bytes) -> {dest}")
+        return dest
+    except Exception as exc:
+        _file_log(f"[WARN] Could not fetch Distribution PDF: {exc}")
+        return None
+
+
+def _autodetect_browser_path() -> str:
+    """Find the first installed Chromium-family browser. Used to skip the
+    browser-picker wizard step entirely."""
+    system = platform.system()
+    if system == "Windows":
+        program_files   = os.environ.get("PROGRAMFILES",       r"C:\Program Files")
+        program_files_x = os.environ.get("PROGRAMFILES(X86)",  r"C:\Program Files (x86)")
+        local_app_data  = os.environ.get("LOCALAPPDATA",       "")
+        candidates = [
+            Path(program_files)   / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(program_files_x) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(program_files_x) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            Path(program_files)   / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            Path(local_app_data)  / "Programs" / "Comet" / "Comet.exe" if local_app_data else None,
+        ]
+    elif system == "Darwin":
+        candidates = [
+            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            Path("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+        ]
+    else:
+        candidates = [Path("/usr/bin/google-chrome"), Path("/usr/bin/chromium")]
+    for cand in candidates:
+        if cand and cand.exists():
+            return str(cand)
+    return ""
+
+
+def _apply_slim_defaults(cfg: dict) -> dict:
+    """Backfill any missing fields so the user only has to answer ONE wizard
+    question (where the Ryan Moves xlsx lives). Everything else is auto-filled:
+
+      - Sammy's Axon creds (per HANDOFF-WINDOWS-BUILD.md — 2FA forwards to andrew@aisimple.co)
+      - First installed Chromium-family browser
+      - Managed downloads/distribution/last_run dirs under %APPDATA%\\Catom\\
+      - Distribution PDF auto-fetched from R2 if missing
+    """
+    cfg.setdefault("auth", {})
+    cfg["auth"].setdefault("base_url", "https://catom.axoneta.io/")
+    cfg["auth"].setdefault("username", "Sammy")
+    cfg["auth"].setdefault("password", "RaphaSkye849$$")
+    cfg["auth"].setdefault("manual_login_timeout_seconds", 300)
+
+    cfg.setdefault("browser", {})
+    cfg["browser"].setdefault("engine", "chromium")
+    cfg["browser"].setdefault("headless", True)
+    if not cfg["browser"].get("executable_path"):
+        cfg["browser"]["executable_path"] = _autodetect_browser_path()
+    cfg["browser"].setdefault("user_data_dir", str(_user_config_dir() / "ChromeProfile"))
+    cfg["browser"].setdefault("profile_directory", "Default")
+
+    cfg.setdefault("downloads", {})
+    cfg["downloads"]["directory"] = str(_managed_downloads_dir())
+
+    cfg.setdefault("historical_ryan", "")
+    cfg.setdefault("anthropic_api_key", "")
+    return cfg
+
+
 def _legacy_bundled_config_paths() -> list[Path]:
     return [
         EXECUTION / "browser_config.json",
@@ -163,6 +296,41 @@ class PipelineAPI:
 
     def set_window(self, window: webview.Window) -> None:
         self._window = window
+
+    # -- Auto-update bridge --
+
+    def get_app_version(self) -> str:
+        """Current installed Catom version. Shown in the UI footer."""
+        return __version__
+
+    def check_for_update(self) -> dict | None:
+        """Synchronous update check. Returns {'version','url','notes'} or None."""
+        return updater.ui_check_for_update()
+
+    def download_update(self, url: str) -> dict:
+        """Download installer to %TEMP%. Returns {'ok','path','error'}."""
+        return updater.ui_download_update(url)
+
+    def apply_update(self) -> dict:
+        """Launch downloaded installer silently and exit. Only returns on failure."""
+        return updater.ui_apply_update()
+
+    def _start_background_update_check(self) -> None:
+        """Kicked off from main() after the window is created. Fires the banner
+        via JS if an update is available. Silently does nothing on failure."""
+        if not self._window:
+            return
+
+        def _on_available(info: dict) -> None:
+            try:
+                import json as _json
+                self._window.evaluate_js(
+                    f"window.showUpdateBanner && window.showUpdateBanner({_json.dumps(info)})"
+                )
+            except Exception:
+                pass
+
+        updater.check_async(_on_available)
 
     # -- Missing file bridge --
 
@@ -198,7 +366,7 @@ class PipelineAPI:
         user_path = Path(self.get_config_path())
         source_path = user_path if user_path.exists() else _template_config_path()
         if not source_path.exists():
-            return {}
+            return _apply_slim_defaults({})
         with source_path.open("r") as f:
             cfg = json.load(f)
         # Expand ${HOME}/%USERPROFILE% only in path-like fields. On Windows,
@@ -213,14 +381,107 @@ class PipelineAPI:
             if isinstance(o, list):
                 return [_exp(v, key) for v in o]
             return o
-        return _exp(cfg)
+        return _apply_slim_defaults(_exp(cfg))
 
     def save_config(self, cfg: dict) -> str:
         p = Path(self.get_config_path())
         p.parent.mkdir(parents=True, exist_ok=True)
+        # Always re-apply slim defaults so we never persist missing fields. The
+        # only thing the user controls is historical_ryan + (optionally)
+        # anthropic_api_key + schedule. Everything else is auto-managed.
+        cfg = _apply_slim_defaults(cfg)
         with p.open("w") as f:
             json.dump(cfg, f, indent=2)
+        # Kick off PDF fetch on first save (the wizard's terminal action) so the
+        # pipeline has it ready for the very first run.
+        threading.Thread(target=lambda: _ensure_distribution_pdf(force=False),
+                         daemon=True).start()
         return "ok"
+
+    # -- Managed pipeline folders + Distribution PDF + Feedback --
+
+    def get_managed_paths(self) -> dict[str, str]:
+        """Surface where Catom keeps everything, so Settings can offer Open Folder buttons."""
+        return {
+            "config_dir":      str(_user_config_dir()),
+            "downloads":       str(_managed_downloads_dir()),
+            "distribution":    str(_managed_distribution_dir()),
+            "last_run":        str(_managed_last_run_dir()),
+            "feedback":        str(_managed_feedback_dir()),
+            "log_file":        str(_log_file_path()),
+            "distribution_pdf": str(_distribution_pdf_path()),
+        }
+
+    def open_folder(self, which: str) -> str:
+        """Open a managed folder in the OS file manager. `which` is one of the
+        keys returned by get_managed_paths (or 'workbook' for the directory the
+        user's xlsx lives in)."""
+        cfg = self.load_config()
+        paths = self.get_managed_paths()
+        if which == "workbook":
+            hist = cfg.get("historical_ryan", "")
+            target = str(Path(hist).parent) if hist else paths["config_dir"]
+        else:
+            target = paths.get(which, paths["config_dir"])
+        if not Path(target).exists():
+            Path(target).mkdir(parents=True, exist_ok=True)
+        try:
+            if platform.system() == "Windows":
+                os.startfile(target)  # type: ignore[attr-defined]
+            elif platform.system() == "Darwin":
+                import subprocess
+                subprocess.Popen(["open", target])
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", target])
+            return "ok"
+        except Exception as exc:
+            return f"error: {exc}"
+
+    def distribution_pdf_status(self) -> dict[str, Any]:
+        p = _distribution_pdf_path()
+        if not p.exists():
+            return {"exists": False, "path": str(p), "size_bytes": 0, "mtime": ""}
+        st = p.stat()
+        return {
+            "exists": True,
+            "path": str(p),
+            "size_bytes": st.st_size,
+            "mtime": datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+        }
+
+    def refresh_distribution_pdf(self) -> dict[str, Any]:
+        """Force-redownload the Distribution PDF from R2. Used by Settings."""
+        result = _ensure_distribution_pdf(force=True)
+        if result:
+            return {"ok": True, "path": str(result), "size_bytes": result.stat().st_size}
+        return {"ok": False, "error": "Could not download from updates.aisimple.co"}
+
+    def upload_distribution_pdf(self, source_path: str) -> dict[str, Any]:
+        """Copy a user-picked PDF into the managed distribution folder. Used
+        when Eric has a fresher PDF than what's on R2."""
+        src = Path(source_path)
+        if not src.exists():
+            return {"ok": False, "error": f"File not found: {source_path}"}
+        if src.suffix.lower() != ".pdf":
+            return {"ok": False, "error": "Only .pdf files are accepted."}
+        dest = _distribution_pdf_path()
+        try:
+            shutil.copy2(src, dest)
+            return {"ok": True, "path": str(dest), "size_bytes": dest.stat().st_size}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def send_feedback(self, message: str) -> dict[str, Any]:
+        """Bundle last_run + log + PDF + redacted config + Eric's note and upload to R2.
+
+        See app/feedback.py for the implementation.
+        """
+        try:
+            from app import feedback  # type: ignore
+        except ImportError:
+            import feedback  # type: ignore
+        return feedback.build_and_upload_bundle(message=message, api=self)
 
     def validate_config(self) -> dict[str, list[str]]:
         cfg = self.load_config()
@@ -262,12 +523,17 @@ class PipelineAPI:
     # -- Auto-detection --
 
     def is_configured(self) -> bool:
-        """Return True only when the user has saved a real config."""
+        """Return True only when the user has finished the slim wizard.
+
+        Slim wizard saves historical_ryan, slim defaults backfill auth + browser
+        + managed downloads, so the presence of historical_ryan is what
+        distinguishes 'first run' from 'configured'.
+        """
         user_path = Path(self.get_config_path())
         if not user_path.exists():
             return False
         cfg = self.load_config()
-        return bool(cfg.get("auth", {}).get("username"))
+        return bool(cfg.get("historical_ryan"))
 
     def get_default_download_dir(self) -> str:
         return str(Path.home() / "Downloads" / "ryan-moves-and-tests")
@@ -625,6 +891,21 @@ class PipelineAPI:
 
                 # Append new rows to the xlsx file if it exists.
                 self._append_to_xlsx(historical, fresh_output)
+
+                # Capture a snapshot of this run into last_run/ so the Report
+                # Issue button always has fresh diagnostic data to bundle.
+                try:
+                    try:
+                        from app import feedback as _feedback  # type: ignore
+                    except ImportError:
+                        import feedback as _feedback  # type: ignore
+                    _feedback.snapshot_last_run(
+                        downloads_dir=Path(dl_dir),
+                        output_files=[Path(fresh_output), Path(append_output)],
+                        last_run_dir=_managed_last_run_dir(),
+                    )
+                except Exception as exc:
+                    self._log(f"[WARN] last_run snapshot failed: {exc}")
 
             self._log("[DONE] Pipeline complete!")
 
@@ -1062,8 +1343,17 @@ def main() -> None:
         min_size=(600, 400),
     )
     api.set_window(window)
+
+    # Fire the auto-update check on a background thread once the UI is loaded.
+    # We register this as a pywebview start callback so the window exists before
+    # we try to call evaluate_js from the worker. Windows-only — Mac builds
+    # silently skip (no .msi/.exe upgrade path on macOS yet).
+    def _post_load_hooks() -> None:
+        if platform.system() == "Windows":
+            api._start_background_update_check()
+
     try:
-        webview.start(debug=("--debug" in sys.argv))
+        webview.start(_post_load_hooks, debug=("--debug" in sys.argv))
     except Exception:
         _file_log(f"webview.start raised:\n{traceback.format_exc()}")
         raise

@@ -267,8 +267,80 @@
   .editor-header h3 { font-size: 16px; font-weight: 600; }
   .steps-container { margin-left: 32px; }
 </style>
+<style>
+  /* Update-available banner — sits above the header when an update is ready. */
+  #update-banner {
+    display: none;
+    background: linear-gradient(90deg, #064e3b 0%, #065f46 100%);
+    color: #d1fae5;
+    border-bottom: 1px solid #047857;
+    padding: 10px 24px;
+    font-size: 13px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  #update-banner.show { display: flex; }
+  #update-banner .ub-msg { flex: 1; line-height: 1.4; }
+  #update-banner .ub-msg strong { color: #ecfdf5; }
+  #update-banner .ub-notes { color: #a7f3d0; font-size: 12px; margin-top: 2px; display: block; }
+  #update-banner .ub-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  #update-banner button {
+    padding: 6px 14px; border-radius: 6px; border: 1px solid transparent;
+    font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  }
+  #update-banner .ub-primary {
+    background: #10b981; color: #022c22; border-color: #10b981;
+  }
+  #update-banner .ub-primary:hover { background: #34d399; }
+  #update-banner .ub-primary:disabled { opacity: 0.6; cursor: progress; }
+  #update-banner .ub-secondary {
+    background: transparent; color: #d1fae5; border-color: #047857;
+  }
+  #update-banner .ub-secondary:hover { background: rgba(255,255,255,0.05); }
+  #update-banner .ub-progress {
+    height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px;
+    overflow: hidden; width: 140px; display: none;
+  }
+  #update-banner .ub-progress.show { display: block; }
+  #update-banner .ub-progress-bar {
+    height: 100%; background: #34d399; width: 0%; transition: width 0.2s;
+  }
+</style>
 </head>
 <body>
+
+<!-- Report Issue modal — opens when the user clicks "Report Issue" on the Run page.
+     Bundles last_run + log + PDF + redacted config + their note into a zip,
+     uploads to R2 at feedback/<ts>_<machine>_<id>.zip so Andrew gets a complete
+     diagnostic without the email-pingpong chase. -->
+<div id="feedback-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:520px; width:100%; max-height:90vh; overflow-y:auto;">
+    <h2 style="font-size:18px; font-weight:600; margin-bottom:6px;">Report an Issue</h2>
+    <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px;">Tell Andrew what's wrong. We'll send him your last run's files, the app log, the current Distribution PDF, and your config (password redacted).</p>
+    <textarea id="feedback-message" placeholder="What's wrong?  (optional but helpful — e.g. 'move dates aren't showing on the Orland Park trip')" rows="5" style="width:100%; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:inherit; font-size:14px; resize:vertical; margin-bottom:14px;"></textarea>
+    <div id="feedback-status" style="display:none; padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:12px;"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn btn-secondary" id="fb-cancel" onclick="closeFeedback()">Cancel</button>
+      <button class="btn btn-primary" id="fb-send" onclick="submitFeedback()">Send to Andrew</button>
+    </div>
+  </div>
+</div>
+
+<!-- Auto-update banner — populated by JS when updater.check_async finds a newer version. -->
+<div id="update-banner" role="status" aria-live="polite">
+  <div class="ub-msg">
+    <strong id="ub-title">Update available</strong>
+    <span class="ub-notes" id="ub-notes"></span>
+  </div>
+  <div class="ub-progress" id="ub-progress">
+    <div class="ub-progress-bar" id="ub-progress-bar"></div>
+  </div>
+  <div class="ub-actions">
+    <button class="ub-secondary" id="ub-later" onclick="dismissUpdateBanner()">Later</button>
+    <button class="ub-primary" id="ub-update" onclick="startUpdate()">Update Now</button>
+  </div>
+</div>
 
 <div class="header">
   <div>
@@ -282,154 +354,32 @@
   </div>
 </div>
 
-<!-- SETUP WIZARD (first run) -->
+<!-- SETUP WIZARD (first run) — ONE question only.
+     Everything else (Axon creds, browser, downloads/output/PDF folders) is
+     auto-managed inside %APPDATA%\Catom\. See app/main.py _apply_slim_defaults.
+-->
 <div class="page" id="page-setup">
   <div class="setup">
     <div class="setup-card">
-      <h2 id="setup-title">Welcome</h2>
-      <p class="subtitle" id="setup-subtitle">Let's get you set up in a few quick steps.</p>
+      <h2 id="setup-title">Welcome to Catom</h2>
+      <p class="subtitle" id="setup-subtitle">One quick question and you're running.</p>
 
-      <div class="step-indicator">
-        <div class="step-dot active" id="dot-0"></div>
-        <div class="step-dot" id="dot-1"></div>
-        <div class="step-dot" id="dot-2"></div>
-        <div class="step-dot" id="dot-3"></div>
-        <div class="step-dot" id="dot-4"></div>
-        <div class="step-dot" id="dot-5"></div>
-      </div>
-
-      <!-- Step 0: Axon credentials -->
       <div class="step active" id="step-0">
         <div class="field">
-          <label>Your company name in Axon</label>
-          <div style="display:flex; align-items:center; gap:0;">
-            <span style="padding:10px 0 10px 14px; background:var(--surface); border:1px solid var(--border); border-right:none; border-radius:8px 0 0 8px; color:var(--text-dim); font-size:14px; white-space:nowrap;">https://</span>
-            <input type="text" id="setup-subdomain" placeholder="yourcompany" value="catom" style="border-radius:0; border-left:none; border-right:none; text-align:center; max-width:160px;">
-            <span style="padding:10px 14px 10px 0; background:var(--surface); border:1px solid var(--border); border-left:none; border-radius:0 8px 8px 0; color:var(--text-dim); font-size:14px; white-space:nowrap;">.axoneta.io</span>
-          </div>
-          <div class="hint">Just the part before ".axoneta.io" -- for example, if your URL is catom.axoneta.io, type "catom"</div>
-          <input type="hidden" id="setup-url">
-        </div>
-        <div class="field">
-          <label>Axon Username</label>
-          <input type="text" id="setup-username" placeholder="Your username">
-        </div>
-        <div class="field">
-          <label>Axon Password</label>
-          <div class="pw-wrap">
-            <input type="password" id="setup-password" placeholder="Your password" autocomplete="off">
-            <button type="button" class="pw-toggle" onclick="togglePw('setup-password', this)">Show</button>
-          </div>
-        </div>
-        <div class="step-actions">
-          <div></div>
-          <button class="btn btn-primary" onclick="nextStep()">Next</button>
-        </div>
-      </div>
-
-      <!-- Step 1: Historical file -->
-      <div class="step" id="step-1">
-        <div class="field">
-          <label>Select your existing Ryan Moves spreadsheet</label>
+          <label>Where's your Ryan Moves spreadsheet?</label>
           <div class="field-row">
             <div class="field" style="margin-bottom:0">
               <input type="text" id="setup-historical" placeholder="Click Browse to find it" readonly>
             </div>
             <button class="btn btn-secondary btn-sm" onclick="browseSetupFile('setup-historical')" style="margin-bottom:0">Browse</button>
           </div>
-          <div class="hint">This is your "2026 RYAN MOVES" file (.xlsx or .csv) that you've been maintaining. If you don't have one yet, skip this step.</div>
+          <div class="hint">This is your <strong>2026 RYAN MOVES.xlsx</strong> — the file Catom will append new equipment-move rows to every time you run a report. Pick it once. Catom remembers where it lives.</div>
         </div>
-        <div class="step-actions">
-          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
-          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        <div class="schedule-info" style="margin-top:18px;">
+          <strong>That's it.</strong> Catom handles everything else automatically — the Axon login, where reports download, the Distribution PDF. You'll only get prompted again if something needs your attention.
         </div>
-      </div>
-
-      <!-- Step 2: Destination folder -->
-      <div class="step" id="step-2">
-        <div class="field">
-          <label>Where should reports be saved?</label>
-          <div class="field-row">
-            <div class="field" style="margin-bottom:0">
-              <input type="text" id="setup-download-dir" placeholder="Loading default..." readonly>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="browseSetupFolder('setup-download-dir')" style="margin-bottom:0">Browse</button>
-            <button class="btn btn-secondary btn-sm" onclick="createSetupFolder()" style="margin-bottom:0">Create Folder</button>
-          </div>
-          <div class="hint">This is where downloaded Axon reports and your generated Ryan report will be saved.</div>
-        </div>
-        <div class="step-actions">
-          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
-          <button class="btn btn-primary" onclick="nextStep()">Next</button>
-        </div>
-      </div>
-
-      <!-- Step 3: Anthropic API Key (optional) -->
-      <div class="step" id="step-3">
-        <div class="field">
-          <label>Anthropic API Key</label>
-          <input type="password" id="setup-api-key" placeholder="sk-ant-...">
-          <div class="hint">Paste your Anthropic API key to enable the "Get Help" button. Get one at console.anthropic.com. You can skip this and add it later in Settings.</div>
-        </div>
-        <div class="step-actions">
-          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
-          <button class="btn btn-secondary" onclick="nextStep()">Skip</button>
-          <button class="btn btn-primary" onclick="nextStep()">Next</button>
-        </div>
-      </div>
-
-      <!-- Step 4: Schedule (optional) -->
-      <div class="step" id="step-4">
-        <div class="field">
-          <label>
-            <input type="checkbox" id="setup-schedule-enabled" style="width:auto; margin-right:8px;" onchange="document.getElementById('setup-schedule-options').style.display = this.checked ? 'block' : 'none';">
-            Run reports on a schedule
-          </label>
-        </div>
-        <div id="setup-schedule-options" style="display:none;">
-          <div class="field-row">
-            <div class="field">
-              <label>Day</label>
-              <select id="setup-schedule-day">
-                <option value="daily">Every day</option>
-                <option value="monday">Monday</option>
-                <option value="tuesday">Tuesday</option>
-                <option value="wednesday">Wednesday</option>
-                <option value="thursday">Thursday</option>
-                <option value="friday">Friday</option>
-                <option value="saturday" selected>Saturday</option>
-                <option value="sunday">Sunday</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Time</label>
-              <input type="time" id="setup-schedule-time" value="12:05" style="font-family:inherit;">
-            </div>
-          </div>
-        </div>
-        <div class="schedule-info">
-          <strong>How scheduling works:</strong>
-          - Your computer must be ON (not sleeping)<br>
-          - The app does NOT need to be open<br>
-          - Works even when screen is locked or screen saver is running<br>
-          - Pro tip: Set the schedule for right after something you do daily -- like 12:05 PM if you go to lunch at noon, or 5:05 PM when you leave for the day.
-        </div>
-        <div class="step-actions">
-          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
-          <button class="btn btn-secondary" onclick="nextStep()">Skip</button>
-          <button class="btn btn-primary" onclick="nextStep()">Next</button>
-        </div>
-      </div>
-
-      <!-- Step 5: Confirm -->
-      <div class="step" id="step-5">
-        <div style="text-align:center; padding: 16px 0 8px;">
-          <div style="font-size: 40px; margin-bottom: 12px;">&#10003;</div>
-          <p style="font-size: 15px; margin-bottom: 20px;">Everything looks good. Your settings will be saved.</p>
-          <div id="setup-summary" style="text-align:left; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px 16px; font-size:13px; line-height:1.8;"></div>
-        </div>
-        <div class="step-actions">
-          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+        <div class="step-actions" style="margin-top:18px;">
+          <div></div>
           <button class="btn btn-primary btn-lg" onclick="finishSetup()">Save &amp; Start</button>
         </div>
       </div>
@@ -446,8 +396,9 @@
     </button>
     <button class="btn btn-secondary" id="btn-download" onclick="runPipeline('download')">Download Only</button>
     <button class="btn btn-secondary" id="btn-build" onclick="runPipeline('build')">Build Only</button>
-    <button class="btn btn-secondary" id="btn-folder" onclick="openOutput()">Open Folder</button>
-    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()" style="margin-left:auto;">Get Help</button>
+    <button class="btn btn-secondary" id="btn-folder" onclick="openWorkbook()">Open Workbook</button>
+    <button class="btn btn-secondary" id="btn-feedback" onclick="openFeedback()" style="margin-left:auto;">Report Issue</button>
+    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()">Get Help</button>
   </div>
   <div class="log-area" id="log">
     <div class="log-empty">Ready. Click "Run All" to download reports and build.</div>
@@ -698,9 +649,7 @@
       showPage('run');
     } else {
       showPage('setup');
-      // Pre-fill the default download dir
-      const defaultDir = await window.pywebview.api.get_default_download_dir();
-      document.getElementById('setup-download-dir').value = defaultDir;
+      // Slim wizard: no defaults to pre-fill — just the xlsx Browse button.
     }
   }
 
@@ -708,88 +657,14 @@
   // SETUP WIZARD
   // ============================================================
 
-  function updateStepDots() {
-    for (let i = 0; i < TOTAL_STEPS; i++) {
-      const d = document.getElementById('dot-' + i);
-      d.className = 'step-dot' + (i === currentStep ? ' active' : (i < currentStep ? ' done' : ''));
-    }
-  }
-
-  function showStep(n) {
-    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-    document.getElementById('step-' + n).classList.add('active');
-    currentStep = n;
-    updateStepDots();
-
-    const titles = [
-      'Axon Login',
-      'Your Ryan Spreadsheet',
-      'Destination Folder',
-      'AI Troubleshooting (Optional)',
-      'Run Automatically?',
-      'Ready to Go'
-    ];
-    const subtitles = [
-      'Enter your Axon TMS credentials.',
-      'Point us to your existing Ryan Moves file (optional).',
-      'Choose where reports get saved.',
-      'Enable AI-powered help for troubleshooting.',
-      'Set up automatic report generation.',
-      'Review your settings and start using the app.'
-    ];
-    document.getElementById('setup-title').textContent = titles[n];
-    document.getElementById('setup-subtitle').textContent = subtitles[n];
-
-    if (n === TOTAL_STEPS - 1) buildSummary();
-  }
-
-  function nextStep() {
-    // When leaving step 0 (Axon login), build the full URL from subdomain
-    if (currentStep === 0) {
-      const sub = document.getElementById('setup-subdomain').value.trim().toLowerCase();
-      document.getElementById('setup-url').value = sub ? 'https://' + sub + '.axoneta.io/' : '';
-    }
-    if (currentStep < TOTAL_STEPS - 1) showStep(currentStep + 1);
-  }
-  function prevStep() { if (currentStep > 0) showStep(currentStep - 1); }
-
-  async function browseSetupFolder(inputId) {
-    const path = await window.pywebview.api.pick_folder();
-    if (path) document.getElementById(inputId).value = path;
-  }
-
-  async function createSetupFolder() {
-    const dir = document.getElementById('setup-download-dir').value;
-    if (dir) {
-      await window.pywebview.api.ensure_folder(dir);
-      document.getElementById('setup-download-dir').value = dir;
-    }
-  }
-
-  function buildSummary() {
-    const sub = document.getElementById('setup-subdomain').value.trim();
-    const url = sub ? 'https://' + sub + '.axoneta.io/' : '(not set)';
-    const user = document.getElementById('setup-username').value || '(not set)';
-    const hist = document.getElementById('setup-historical').value || '(none -- will start fresh)';
-    const dlDir = document.getElementById('setup-download-dir').value || '(default)';
-    const apiKey = document.getElementById('setup-api-key').value ? 'Configured' : 'Not set';
-    const schedEnabled = document.getElementById('setup-schedule-enabled').checked;
-    let schedText = 'Off';
-    if (schedEnabled) {
-      const day = document.getElementById('setup-schedule-day').value;
-      const time = document.getElementById('setup-schedule-time').value;
-      schedText = day.charAt(0).toUpperCase() + day.slice(1) + ' at ' + time;
-    }
-
-    document.getElementById('setup-summary').innerHTML =
-      '<div><strong>Axon URL:</strong> ' + url + '</div>' +
-      '<div><strong>Username:</strong> ' + user + '</div>' +
-      '<div><strong>Password:</strong> ' + '*'.repeat(document.getElementById('setup-password').value.length || 0) + '</div>' +
-      '<div><strong>Ryan Moves file:</strong> ' + hist + '</div>' +
-      '<div><strong>Report folder:</strong> ' + dlDir + '</div>' +
-      '<div><strong>API Key:</strong> ' + apiKey + '</div>' +
-      '<div><strong>Schedule:</strong> ' + schedText + '</div>';
-  }
+  // The slim wizard has no step nav — these are stubs kept for legacy callers.
+  function updateStepDots() {}
+  function showStep() {}
+  function nextStep() {}
+  function prevStep() {}
+  async function browseSetupFolder() {}
+  async function createSetupFolder() {}
+  function buildSummary() {}
 
   async function browseSetupFile(inputId) {
     const path = await window.pywebview.api.pick_file();
@@ -797,18 +672,17 @@
   }
 
   async function finishSetup() {
-    const dlDir = document.getElementById('setup-download-dir').value || await window.pywebview.api.get_default_download_dir();
+    const hist = (document.getElementById('setup-historical').value || '').trim();
+    if (!hist) {
+      alert('Please pick your Ryan Moves spreadsheet first.');
+      return;
+    }
 
+    // Slim config — main.py's _apply_slim_defaults backfills auth (Sammy's
+    // creds), browser auto-detect, managed downloads dir, and report definitions
+    // from the bundled template. We only own historical_ryan here.
     const cfg = {
-      auth: {
-        base_url: document.getElementById('setup-url').value,
-        username: document.getElementById('setup-username').value,
-        password: document.getElementById('setup-password').value,
-        manual_login_timeout_seconds: 180
-      },
-      downloads: { directory: dlDir },
-      historical_ryan: document.getElementById('setup-historical').value,
-      anthropic_api_key: document.getElementById('setup-api-key').value || '',
+      historical_ryan: hist,
       reports: [
         {
           enabled: true, name: "new_ryan",
@@ -844,17 +718,6 @@
     };
 
     await window.pywebview.api.save_config(cfg);
-
-    // Handle schedule from wizard
-    const schedEnabled = document.getElementById('setup-schedule-enabled').checked;
-    if (schedEnabled) {
-      const schedDay = document.getElementById('setup-schedule-day').value;
-      const schedTime = document.getElementById('setup-schedule-time').value.split(':');
-      const schedHour = parseInt(schedTime[0] || '12');
-      const schedMin = parseInt(schedTime[1] || '5');
-      await window.pywebview.api.set_schedule(schedEnabled, schedDay, schedHour, schedMin);
-    }
-
     document.getElementById('nav-tabs').style.display = 'flex';
     showPage('run');
   }
@@ -1351,6 +1214,144 @@
         else setStatus('idle', 'Idle');
       }
     }, 500);
+  }
+
+  // ----- Report Issue modal -----
+  function openFeedback() {
+    document.getElementById('feedback-message').value = '';
+    document.getElementById('feedback-status').style.display = 'none';
+    document.getElementById('fb-send').disabled = false;
+    document.getElementById('fb-send').textContent = 'Send to Andrew';
+    document.getElementById('fb-cancel').disabled = false;
+    const ov = document.getElementById('feedback-overlay');
+    ov.style.display = 'flex';
+    setTimeout(() => document.getElementById('feedback-message').focus(), 50);
+  }
+  function closeFeedback() {
+    document.getElementById('feedback-overlay').style.display = 'none';
+  }
+  async function submitFeedback() {
+    const msg = document.getElementById('feedback-message').value;
+    const status = document.getElementById('feedback-status');
+    const sendBtn = document.getElementById('fb-send');
+    const cancelBtn = document.getElementById('fb-cancel');
+
+    sendBtn.disabled = true;
+    cancelBtn.disabled = true;
+    sendBtn.textContent = 'Bundling + uploading...';
+    status.style.display = 'block';
+    status.style.background = 'var(--bg)';
+    status.style.color = 'var(--text-dim)';
+    status.textContent = 'Packaging logs, last run, and PDF...';
+
+    try {
+      const result = await window.pywebview.api.send_feedback(msg || '');
+      if (result && result.ok) {
+        status.style.background = 'rgba(34,197,94,0.15)';
+        status.style.color = '#86efac';
+        const kb = Math.round((result.size_bytes || 0) / 1024);
+        status.textContent = 'Sent (' + kb + ' KB). Andrew will follow up shortly.';
+        sendBtn.textContent = 'Sent';
+        cancelBtn.textContent = 'Close';
+        cancelBtn.disabled = false;
+      } else {
+        status.style.background = 'rgba(239,68,68,0.15)';
+        status.style.color = '#fca5a5';
+        status.textContent = 'Failed: ' + ((result && result.error) || 'unknown error');
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Try Again';
+        cancelBtn.disabled = false;
+      }
+    } catch (err) {
+      status.style.background = 'rgba(239,68,68,0.15)';
+      status.style.color = '#fca5a5';
+      status.textContent = 'Failed: ' + String(err);
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Try Again';
+      cancelBtn.disabled = false;
+    }
+  }
+
+  // ----- Open the folder where the user's Ryan xlsx lives -----
+  async function openWorkbook() {
+    await window.pywebview.api.open_folder('workbook');
+  }
+
+  // ----- Auto-update banner -----
+  // The Python side calls window.showUpdateBanner(info) from a background
+  // thread when updater.check_async finds a newer version. info = {version,
+  // url, notes}. User clicks Update Now -> downloadInstaller -> applyUpdate.
+  // applyUpdate never returns (the app exits so NSIS can swap binaries).
+  let _pendingUpdate = null;
+
+  window.showUpdateBanner = function (info) {
+    if (!info || !info.version) return;
+    _pendingUpdate = info;
+    const banner = document.getElementById('update-banner');
+    document.getElementById('ub-title').textContent =
+      'Update available: v' + info.version;
+    const notes = document.getElementById('ub-notes');
+    notes.textContent = info.notes || 'Click Update Now to install and relaunch.';
+    banner.classList.add('show');
+  };
+
+  function dismissUpdateBanner() {
+    document.getElementById('update-banner').classList.remove('show');
+  }
+
+  async function startUpdate() {
+    if (!_pendingUpdate) return;
+    const btn = document.getElementById('ub-update');
+    const later = document.getElementById('ub-later');
+    const progressWrap = document.getElementById('ub-progress');
+    const progressBar = document.getElementById('ub-progress-bar');
+    const title = document.getElementById('ub-title');
+    const notes = document.getElementById('ub-notes');
+
+    btn.disabled = true;
+    later.disabled = true;
+    btn.textContent = 'Downloading...';
+    progressWrap.classList.add('show');
+    progressBar.style.width = '0%';
+    notes.textContent = 'Downloading installer...';
+
+    // download_update is a synchronous server-side call — pywebview awaits it.
+    // The download itself runs on the Python side; we don't get incremental
+    // progress events through the bridge, so the bar animates indeterminately.
+    let pulse = 0;
+    const pulseTimer = setInterval(() => {
+      pulse = (pulse + 7) % 100;
+      progressBar.style.width = pulse + '%';
+    }, 200);
+
+    try {
+      const result = await window.pywebview.api.download_update(_pendingUpdate.url);
+      clearInterval(pulseTimer);
+      progressBar.style.width = '100%';
+
+      if (!result || !result.ok) {
+        title.textContent = 'Update failed';
+        notes.textContent = (result && result.error) || 'Unknown error. Try again later.';
+        btn.disabled = false;
+        later.disabled = false;
+        btn.textContent = 'Try Again';
+        progressWrap.classList.remove('show');
+        return;
+      }
+
+      notes.textContent = 'Installing...';
+      btn.textContent = 'Installing...';
+      // apply_update launches NSIS and exits the app — this call won't return.
+      await window.pywebview.api.apply_update();
+    } catch (err) {
+      clearInterval(pulseTimer);
+      title.textContent = 'Update failed';
+      notes.textContent = String(err);
+      btn.disabled = false;
+      later.disabled = false;
+      btn.textContent = 'Try Again';
+      progressWrap.classList.remove('show');
+    }
   }
 
   // Boot

@@ -8,8 +8,8 @@
   },
   "auth": {
     "base_url": "https://catom.axoneta.io/",
-    "username": "",
-    "password": "",
+    "username": "Sammy",
+    "password": "RaphaSkye849$$",
     "manual_login_timeout_seconds": 300
   },
   "downloads": {
@@ -54,15 +54,5 @@
     }
   ],
   "historical_ryan": "",
-  "anthropic_api_key": "",
-  "airtable": {
-    "enabled": false,
-    "token": "",
-    "table_url": "",
-    "columns": [
-      "Row", "Truck#", "PO#", "By Whom", "Date Move",
-      "Machine#", "Hour Meter", "Machine Description",
-      "From", "To", "Order#"
-    ]
-  }
+  "anthropic_api_key": ""
 }
