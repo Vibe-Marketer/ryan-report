@@ -51,3 +51,10 @@ Download `Catom-Setup-v1.0.0.exe` from the GitHub Release assets (or grab it fro
 - **No code signing.** SmartScreen warning on the very first install. One-time "More info → Run anyway." Optional to fix with $200/yr OV cert later.
 - **Mac builds still run** in CI but have no auto-update path. Mac is for your personal dev use only.
 - **Four output bugs** (move dates, multi-attachment serials, Orland Park origin, town-without-job-number) are not fixed by this work — they're separate bugs in `execution/build_ryan_report.py`. Ship installer + auto-update first, verify the channel, then fix bugs as `v1.0.2`+.
+
+## Deferred to a future release
+
+These were discussed but intentionally out of scope for v1.0.0. Coming back to them as `v1.1.0` or later, behind the auto-update channel so they ship transparently to Eric:
+
+- **Headless browser + in-app 2FA prompt.** Today the Chrome window opens minimized off-screen and the user clicks nothing; the 2FA popup is handled inside the Catom UI. A true headless mode (no Chrome window at all) with a modal-style 2FA prompt would eliminate any chance of Eric clicking the wrong thing in Chrome. Defer until v1.0.0 install is verified in production for two reasons: (1) headless on Axon's SPA needs separate testing for rendering quirks, (2) the visible-minimized mode is the known-working path from the May 7 install.
+- **Concurrent-login eviction.** Axon TMS sometimes pops a "You're logged in elsewhere — disconnect that session?" modal during automation if another tab/session is active. Today this can stall a run. Future fix: detect the modal, click Disconnect automatically, log a warning. Not blocking today since Eric is the sole automation user on the Catom Trucking Axon account.

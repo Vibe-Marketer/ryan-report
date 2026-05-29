@@ -233,18 +233,25 @@ def _autodetect_browser_path() -> str:
 
 
 def _apply_slim_defaults(cfg: dict) -> dict:
-    """Backfill any missing fields so the user only has to answer ONE wizard
-    question (where the Ryan Moves xlsx lives). Everything else is auto-filled:
+    """Backfill only the things the user shouldn't have to think about.
 
-      - Sammy's Axon creds (per HANDOFF-WINDOWS-BUILD.md — 2FA forwards to andrew@aisimple.co)
-      - First installed Chromium-family browser
+    Per-customer secrets (Axon URL + username + password) are captured by the
+    wizard and stored in the user's config file. They are NEVER pre-filled or
+    embedded in the build.
+
+    What we DO backfill:
+      - First installed Chromium-family browser (auto-detected at runtime)
       - Managed downloads/distribution/last_run dirs under %APPDATA%\\Catom\\
+      - Sensible Axon base_url default (catom.axoneta.io — current customer's
+        subdomain; overridable in the wizard)
       - Distribution PDF auto-fetched from R2 if missing
+
+    Credentials stay empty until the user fills them in the wizard or Settings.
     """
     cfg.setdefault("auth", {})
     cfg["auth"].setdefault("base_url", "https://catom.axoneta.io/")
-    cfg["auth"].setdefault("username", "Sammy")
-    cfg["auth"].setdefault("password", "RaphaSkye849$$")
+    cfg["auth"].setdefault("username", "")
+    cfg["auth"].setdefault("password", "")
     cfg["auth"].setdefault("manual_login_timeout_seconds", 300)
 
     cfg.setdefault("browser", {})
@@ -523,17 +530,19 @@ class PipelineAPI:
     # -- Auto-detection --
 
     def is_configured(self) -> bool:
-        """Return True only when the user has finished the slim wizard.
+        """Return True only when the user has finished the wizard.
 
-        Slim wizard saves historical_ryan, slim defaults backfill auth + browser
-        + managed downloads, so the presence of historical_ryan is what
-        distinguishes 'first run' from 'configured'.
+        Configured = wizard saved both Axon credentials AND the historical
+        Ryan xlsx path. Either alone is incomplete.
         """
         user_path = Path(self.get_config_path())
         if not user_path.exists():
             return False
         cfg = self.load_config()
-        return bool(cfg.get("historical_ryan"))
+        auth = cfg.get("auth", {})
+        has_creds = bool(auth.get("username")) and bool(auth.get("password"))
+        has_xlsx  = bool(cfg.get("historical_ryan"))
+        return has_creds and has_xlsx
 
     def get_default_download_dir(self) -> str:
         return str(Path.home() / "Downloads" / "ryan-moves-and-tests")

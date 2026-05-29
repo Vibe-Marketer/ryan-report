@@ -8,8 +8,8 @@
   },
   "auth": {
     "base_url": "https://catom.axoneta.io/",
-    "username": "Sammy",
-    "password": "RaphaSkye849$$",
+    "username": "",
+    "password": "",
     "manual_login_timeout_seconds": 300
   },
   "downloads": {

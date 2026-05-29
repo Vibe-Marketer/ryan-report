@@ -362,9 +362,44 @@
   <div class="setup">
     <div class="setup-card">
       <h2 id="setup-title">Welcome to Catom</h2>
-      <p class="subtitle" id="setup-subtitle">One quick question and you're running.</p>
+      <p class="subtitle" id="setup-subtitle">Two quick steps and you're running.</p>
 
+      <div class="step-indicator">
+        <div class="step-dot active" id="dot-0"></div>
+        <div class="step-dot" id="dot-1"></div>
+      </div>
+
+      <!-- Step 0: Axon credentials (URL + username + password) -->
       <div class="step active" id="step-0">
+        <div class="field">
+          <label>Your company subdomain in Axon</label>
+          <div style="display:flex; align-items:center; gap:0;">
+            <span style="padding:10px 0 10px 14px; background:var(--surface); border:1px solid var(--border); border-right:none; border-radius:8px 0 0 8px; color:var(--text-dim); font-size:14px; white-space:nowrap;">https://</span>
+            <input type="text" id="setup-subdomain" placeholder="yourcompany" value="catom" style="border-radius:0; border-left:none; border-right:none; text-align:center; max-width:160px;">
+            <span style="padding:10px 14px 10px 0; background:var(--surface); border:1px solid var(--border); border-left:none; border-radius:0 8px 8px 0; color:var(--text-dim); font-size:14px; white-space:nowrap;">.axoneta.io</span>
+          </div>
+          <div class="hint">Just the part before <code>.axoneta.io</code> — e.g. if your URL is <code>catom.axoneta.io</code>, type <code>catom</code>.</div>
+          <input type="hidden" id="setup-url">
+        </div>
+        <div class="field">
+          <label>Axon Username</label>
+          <input type="text" id="setup-username" placeholder="Your username">
+        </div>
+        <div class="field">
+          <label>Axon Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="setup-password" placeholder="Your password" autocomplete="off">
+            <button type="button" class="pw-toggle" onclick="togglePw('setup-password', this)">Show</button>
+          </div>
+        </div>
+        <div class="step-actions" style="margin-top:14px;">
+          <div></div>
+          <button class="btn btn-primary" onclick="nextStep()">Next</button>
+        </div>
+      </div>
+
+      <!-- Step 1: Pick the Ryan Moves xlsx -->
+      <div class="step" id="step-1">
         <div class="field">
           <label>Where's your Ryan Moves spreadsheet?</label>
           <div class="field-row">
@@ -373,13 +408,13 @@
             </div>
             <button class="btn btn-secondary btn-sm" onclick="browseSetupFile('setup-historical')" style="margin-bottom:0">Browse</button>
           </div>
-          <div class="hint">This is your <strong>2026 RYAN MOVES.xlsx</strong> — the file Catom will append new equipment-move rows to every time you run a report. Pick it once. Catom remembers where it lives.</div>
+          <div class="hint">This is your <strong>2026 RYAN MOVES.xlsx</strong> — the file Catom appends new equipment-move rows to every time you run a report. Pick it once. Catom remembers.</div>
         </div>
         <div class="schedule-info" style="margin-top:18px;">
-          <strong>That's it.</strong> Catom handles everything else automatically — the Axon login, where reports download, the Distribution PDF. You'll only get prompted again if something needs your attention.
+          <strong>That's it.</strong> Catom handles everything else automatically — where reports download, the Distribution PDF, all of it.
         </div>
         <div class="step-actions" style="margin-top:18px;">
-          <div></div>
+          <button class="btn btn-secondary" onclick="prevStep()">Back</button>
           <button class="btn btn-primary btn-lg" onclick="finishSetup()">Save &amp; Start</button>
         </div>
       </div>
@@ -657,11 +692,43 @@
   // SETUP WIZARD
   // ============================================================
 
-  // The slim wizard has no step nav — these are stubs kept for legacy callers.
-  function updateStepDots() {}
-  function showStep() {}
-  function nextStep() {}
-  function prevStep() {}
+  // 2-step wizard: creds -> xlsx.
+  const TOTAL_STEPS = 2;
+  let _currentStep = 0;
+
+  function updateStepDots() {
+    for (let i = 0; i < TOTAL_STEPS; i++) {
+      const d = document.getElementById('dot-' + i);
+      if (!d) continue;
+      d.className = 'step-dot' + (i === _currentStep ? ' active' : (i < _currentStep ? ' done' : ''));
+    }
+  }
+
+  function showStep(n) {
+    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+    const el = document.getElementById('step-' + n);
+    if (el) el.classList.add('active');
+    _currentStep = n;
+    updateStepDots();
+  }
+
+  function nextStep() {
+    if (_currentStep === 0) {
+      // Validate creds before advancing.
+      const sub  = (document.getElementById('setup-subdomain').value || '').trim().toLowerCase();
+      const user = (document.getElementById('setup-username').value  || '').trim();
+      const pass = document.getElementById('setup-password').value   || '';
+      if (!sub)  { alert('Please enter your Axon subdomain.'); return; }
+      if (!user) { alert('Please enter your Axon username.');  return; }
+      if (!pass) { alert('Please enter your Axon password.');  return; }
+      document.getElementById('setup-url').value = 'https://' + sub + '.axoneta.io/';
+    }
+    if (_currentStep < TOTAL_STEPS - 1) showStep(_currentStep + 1);
+  }
+  function prevStep() { if (_currentStep > 0) showStep(_currentStep - 1); }
+
+  // Legacy stubs — no longer used by the new wizard but retained so any stray
+  // call (from cached HTML or external triggers) is a no-op rather than a JS error.
   async function browseSetupFolder() {}
   async function createSetupFolder() {}
   function buildSummary() {}
@@ -672,16 +739,32 @@
   }
 
   async function finishSetup() {
+    const sub  = (document.getElementById('setup-subdomain').value || '').trim().toLowerCase();
+    const user = (document.getElementById('setup-username').value  || '').trim();
+    const pass = document.getElementById('setup-password').value   || '';
     const hist = (document.getElementById('setup-historical').value || '').trim();
+
+    if (!sub || !user || !pass) {
+      alert('Please go back and complete your Axon login details.');
+      showStep(0);
+      return;
+    }
     if (!hist) {
       alert('Please pick your Ryan Moves spreadsheet first.');
       return;
     }
 
-    // Slim config — main.py's _apply_slim_defaults backfills auth (Sammy's
-    // creds), browser auto-detect, managed downloads dir, and report definitions
-    // from the bundled template. We only own historical_ryan here.
+    // main.py's _apply_slim_defaults backfills browser auto-detect, managed
+    // downloads dir, and report definitions from the bundled template. We own
+    // auth + historical_ryan here. Credentials live in the user's config file,
+    // never embedded in the build.
     const cfg = {
+      auth: {
+        base_url: 'https://' + sub + '.axoneta.io/',
+        username: user,
+        password: pass,
+        manual_login_timeout_seconds: 300
+      },
       historical_ryan: hist,
       reports: [
         {
