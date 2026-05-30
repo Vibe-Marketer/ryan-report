@@ -5,6 +5,12 @@ on:
   release:
     types: [created]
 
+# Default GITHUB_TOKEN is read-only on this repo, so `gh release upload` 403'd
+# during the v1.3.0 build. Grant contents:write so future tagged releases can
+# attach their .exe / .dmg without manual intervention.
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
