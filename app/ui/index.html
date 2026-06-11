@@ -533,6 +533,21 @@
     </div>
 
     <div class="settings-section">
+      <h3>Distribution Report PDF</h3>
+      <div class="hint" style="margin-bottom:10px;">
+        Catom uses the latest RIC Equipment Distribution Report (PDF) to fill in job numbers.
+        When RIC emails you a new one, upload it here so job numbers stay accurate.
+      </div>
+      <div class="field-row">
+        <div class="field" style="margin-bottom:0">
+          <input type="text" id="cfg-pdf-status" readonly placeholder="Checking...">
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="uploadDistributionPdf()" style="margin-bottom:0">Upload New PDF</button>
+      </div>
+      <div id="cfg-pdf-msg" class="hint" style="margin-top:8px; color:var(--success); opacity:0; transition:opacity .3s;"></div>
+    </div>
+
+    <div class="settings-section">
       <h3>AI Troubleshooting (Optional)</h3>
       <div class="field">
         <label>Anthropic API Key</label>
@@ -867,6 +882,9 @@
     document.getElementById('cfg-download-dir').value = cfg?.downloads?.directory || '';
     document.getElementById('cfg-historical').value = cfg?.historical_ryan || '';
     document.getElementById('cfg-api-key').value = cfg?.anthropic_api_key || '';
+
+    // Distribution PDF status
+    refreshPdfStatus();
 
     // Hours saved
     const hoursSaved = await window.pywebview.api.get_hours_saved();
@@ -1367,10 +1385,12 @@
         status.style.background = 'rgba(34,197,94,0.15)';
         status.style.color = '#86efac';
         const kb = Math.round((result.size_bytes || 0) / 1024);
-        status.textContent = 'Sent (' + kb + ' KB). Andrew will follow up shortly.';
+        status.textContent = 'Sent ✓ Andrew will follow up. Closing…';
         sendBtn.textContent = 'Sent';
         cancelBtn.textContent = 'Close';
         cancelBtn.disabled = false;
+        // Auto-close on success so the user isn't left to dismiss it manually.
+        setTimeout(() => { closeFeedback(); }, 2500);
       } else {
         status.style.background = 'rgba(239,68,68,0.15)';
         status.style.color = '#fca5a5';
@@ -1392,6 +1412,43 @@
   // ----- Open the folder where the user's Ryan xlsx lives -----
   async function openWorkbook() {
     await window.pywebview.api.open_folder('workbook');
+  }
+
+  // ----- Distribution PDF management -----
+  async function refreshPdfStatus() {
+    const el = document.getElementById('cfg-pdf-status');
+    if (!el) return;
+    try {
+      const s = await window.pywebview.api.distribution_pdf_status();
+      if (s && s.exists) {
+        const kb = Math.round((s.size_bytes || 0) / 1024);
+        el.value = 'Loaded — ' + kb + ' KB · updated ' + (s.mtime || 'unknown');
+      } else {
+        el.value = 'No PDF loaded yet';
+      }
+    } catch (e) { el.value = 'Status unavailable'; }
+  }
+
+  async function uploadDistributionPdf() {
+    const path = await window.pywebview.api.pick_file('Select the RIC Distribution Report PDF');
+    if (!path) return;
+    const msg = document.getElementById('cfg-pdf-msg');
+    msg.textContent = 'Uploading...'; msg.style.color = 'var(--text-dim)'; msg.style.opacity = '1';
+    try {
+      const r = await window.pywebview.api.upload_distribution_pdf(path);
+      if (r && r.ok) {
+        msg.textContent = 'Distribution PDF updated ✓ Job numbers will use the new data.';
+        msg.style.color = 'var(--success)';
+        refreshPdfStatus();
+      } else {
+        msg.textContent = 'Upload failed: ' + ((r && r.error) || 'unknown error');
+        msg.style.color = 'var(--error)';
+      }
+    } catch (e) {
+      msg.textContent = 'Upload failed: ' + String(e);
+      msg.style.color = 'var(--error)';
+    }
+    setTimeout(() => { msg.style.opacity = '0'; }, 6000);
   }
 
   // ----- Auto-update banner -----

@@ -158,13 +158,40 @@ def normalize_space(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip())
 
 
+# Standard Catom serial: NN-NNNNN or NN NNNNN (2-3 digit prefix, 3-6 digit body).
+_SERIAL_RE = re.compile(r'\b(\d{2,3})[-\s](\d{3,6})\b')
+# VIN-like single token (alphanumeric, >= 7 chars, contains a digit, no spaces).
+_VIN_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9\-]{6,}$')
+
+
 def normalize_serial(value: str) -> str:
+    """Extract a clean equipment serial from the Order Master cell.
+
+    Handles the messy real-world cases Eric flagged where attachment serials
+    arrive wrapped in words or with spaces instead of dashes:
+
+      '87-16453 BUCKET'   -> '87-16453'
+      'bucket 87-16267'   -> '87-16267'
+      'forks 87-11569'    -> '87-11569'
+      '52 12711'          -> '52-12711'
+      'RIC 99-12034'      -> '99-12034'
+
+    Pure descriptive junk ('12 barricades', 'hrs. 4593.2', 'p', '6') and the
+    ignored placeholders ('0', 'N/A') return '' so they never reach the report.
+    VIN-style serials ('1FF035GXCNK30', 'GS300091') are kept as-is.
+    """
     value = normalize_space(value)
-    if not value:
+    if not value or value.lower() in IGNORED_SERIAL_VALUES:
         return ""
-    if value.lower() in IGNORED_SERIAL_VALUES:
-        return ""
-    return value.replace("  ", " ")
+    # 1) Standard Catom serial embedded anywhere -> normalize to NN-NNNNN.
+    m = _SERIAL_RE.search(value)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    # 2) VIN-like single token (no spaces, has a digit) -> keep, uppercased.
+    if " " not in value and _VIN_RE.match(value) and any(c.isdigit() for c in value):
+        return value.upper()
+    # 3) Everything else is descriptive text, not a serial.
+    return ""
 
 
 def normalize_meter(value: str, default: str = "N/A") -> str:
@@ -653,6 +680,7 @@ def parse_order_master_summary(
                 # description (better than mislabeling).
                 pass
             if not description:
+                # Track it so we can backfill the description later...
                 unresolved.append({
                     "order_number": order_number,
                     "serial": serial,
@@ -660,9 +688,11 @@ def parse_order_master_summary(
                     "issue": "Missing description",
                     "suggested_description": "",
                 })
-                # Skip rows without a description — matches the legacy
-                # behavior in collect_generated_rows.
-                continue
+                # ...but DO NOT drop it. Eric's #1 bug: attachment serials with
+                # no historical description were silently skipped, so multi-
+                # attachment moves only showed the first (described) serial.
+                # Emit the serial with a blank description — the machine number
+                # is the data that matters; Ryan/Eric fills the description.
 
             generated.append(GeneratedRow(
                 po="",  # blank per spec — Ryan fills this in after receiving the report

@@ -208,7 +208,9 @@ class TestConfigExpansion:
             cfg = PipelineAPI().load_config()
 
         assert cfg["auth"]["password"] == "secret$$"
-        assert cfg["downloads"]["directory"] == "C:\\Users\\Andrew\\Downloads"
+        # downloads.directory is now an app-managed path (_apply_slim_defaults).
+        assert cfg["downloads"]["directory"]
+        assert "Catom" in cfg["downloads"]["directory"]
 
 
 class TestSerialLookup:
@@ -245,4 +247,6 @@ class TestSerialLookup:
         cfg = load_config(config_file)
 
         assert cfg["auth"]["password"] == "secret$$"
+        # download_reports.load_config reads the config verbatim (no slim
+        # defaults), so the user-expanded downloads path is preserved as-is.
         assert cfg["downloads"]["directory"] == "C:\\Users\\Andrew\\Downloads"
