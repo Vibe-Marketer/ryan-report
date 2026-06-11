@@ -84,30 +84,24 @@ ShowUninstDetails hide
 !insertmacro MUI_LANGUAGE "English"
 
 ;------------------------------------------------------------
-; Auto-uninstall any previous version BEFORE we install.
-; Looks up the prior install's uninstaller from the registry and runs it
-; silently. Works for both interactive and /S silent installs.
+; Upgrade strategy: OVERWRITE IN PLACE. We deliberately do NOT run the previous
+; version's uninstaller first.
+;
+; The old approach (ExecWait the prior uninstaller with /S _?=$INSTDIR, THEN
+; install) RACED: the uninstaller's `RMDir /r $INSTDIR` ran asynchronously and
+; kept deleting files while the new install was writing them into the SAME dir.
+; Result: a half-written install and the version never advanced — the recurring
+; "silent update didn't take, still on the old version" bug.
+;
+; Installing onto the existing dir is clean and atomic: PyInstaller --onedir
+; uses stable filenames (Catom.exe, _internal\*), so SetOverwrite on replaces
+; every file, and the Section's rename-aside handles a locked Catom.exe. The
+; uninstall registry keys are simply rewritten with the new version below. This
+; is exactly how Slack / VS Code / Electron-Squirrel do in-place upgrades.
 ;------------------------------------------------------------
 Function .onInit
-  ; Remove a previous PER-USER install (HKCU).
-  ReadRegStr $R0 HKCU "${PRODUCT_UNINST_KEY}" "UninstallString"
-  ${If} $R0 != ""
-    ReadRegStr $R1 HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"
-    DetailPrint "Removing previous Catom install at $R1..."
-    ClearErrors
-    ExecWait '"$R0" /S _?=$R1' $0
-    Delete "$R0"
-  ${EndIf}
-
-  ; Also clean up any OLD per-machine (Program Files / HKLM) install left over
-  ; from v1.3.0–v1.3.4. We can't silently remove it without admin, but we can
-  ; unregister it from HKLM if we happen to have rights, and the leftover files
-  ; are harmless once the per-user shortcut takes over. Best-effort only.
-  ReadRegStr $R2 HKLM "${PRODUCT_UNINST_KEY}" "UninstallString"
-  ${If} $R2 != ""
-    ReadRegStr $R3 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
-    DetailPrint "Found old machine-wide install at $R3 (superseded by per-user)."
-  ${EndIf}
+  ; No-op on purpose. See the comment block above: pre-uninstall caused the
+  ; install/uninstall race. We overwrite in place instead.
 FunctionEnd
 
 Function un.onInit
