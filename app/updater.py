@@ -169,18 +169,37 @@ def apply_and_exit(installer_path: Path) -> None:
     if not installer_path.exists():
         raise FileNotFoundError(f"Installer not found at {installer_path}")
 
-    # DETACHED_PROCESS = 0x00000008 -- the installer runs independent of our
-    # process so we can exit cleanly without killing it.
+    # CRITICAL — why this is launched through cmd with a delay, not directly:
+    #
+    # If we Popen the installer directly, the installer is a CHILD of this Catom
+    # process. The installer's first act is `taskkill /F /IM Catom.exe` to free
+    # the locked binary — and the old version used `/T` (tree kill), which
+    # terminated the installer ITSELF (it's Catom's child). Net result: app
+    # closed, installer died with it, nothing installed, version never advanced.
+    # That is the "it closed and stayed on the old version" bug.
+    #
+    # Fix: hand the job to a detached cmd that (1) waits ~3s for THIS process to
+    # fully exit, then (2) runs the installer. By then Catom is gone, the
+    # installer is parented to that transient cmd (NOT Catom), so nothing kills
+    # it. This is the standard self-update launcher pattern on Windows.
     DETACHED_PROCESS = 0x00000008
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
+    CREATE_NO_WINDOW = 0x08000000
 
+    _ulog(f"applying update via {installer_path} (detached, delayed)")
+
+    # ping is a reliable built-in ~3s delay (-n 4 ≈ 3s). The installer path is
+    # quoted to survive spaces in %TEMP%.
+    launch = f'ping 127.0.0.1 -n 4 >nul & "{installer_path}" /S'
     subprocess.Popen(
-        [str(installer_path), "/S"],
-        creationflags=DETACHED_PROCESS,
+        launch,
+        shell=True,
+        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
         close_fds=True,
     )
 
-    # Exit hard so the installer can replace our binaries without
-    # file-in-use locks. os._exit skips Python finalizers; that's deliberate.
+    # Exit hard so the installer can replace our binaries without file-in-use
+    # locks. os._exit skips Python finalizers; that's deliberate.
     os._exit(0)
 
 

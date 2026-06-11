@@ -133,8 +133,12 @@ Section "Catom" SEC_MAIN
   ; OVERWRITE a locked .exe, but Windows DOES let you RENAME it. So move the old
   ; Catom.exe aside, which always succeeds, then File writes a fresh one into the
   ; freed name. The renamed leftover is deleted now or on next reboot.
-  nsExec::Exec 'taskkill /F /IM ${PRODUCT_EXE} /T'
-  nsExec::Exec 'taskkill /F /IM msedgewebview2.exe /T'
+  ; NOTE: no /T (tree kill) on Catom.exe. When the in-app updater launches this
+  ; installer, /T would walk the process tree and could terminate the installer
+  ; itself. Kill ONLY the Catom.exe image; WebView2 children are killed by name
+  ; on the next line.
+  nsExec::Exec 'taskkill /F /IM ${PRODUCT_EXE}'
+  nsExec::Exec 'taskkill /F /IM msedgewebview2.exe'
   Sleep 1500
 
   ${If} ${FileExists} "$INSTDIR\${PRODUCT_EXE}"
