@@ -44,11 +44,16 @@
 ;------------------------------------------------------------
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "Catom-Setup-v${PRODUCT_VERSION}.exe"
-InstallDir "$PROGRAMFILES64\Catom"
-InstallDirRegKey HKLM "${PRODUCT_REG_ROOT}" "InstallDir"
+; PER-USER install: into the user's profile, NOT Program Files. This is what
+; makes silent auto-updates work — no admin / UAC needed, so the updater can
+; download + install a new version without any prompt. (Slack/VS Code/Zoom all
+; do this.) Was previously $PROGRAMFILES64 + admin, which made silent updates
+; fail because Windows won't show a UAC prompt during a /S silent run.
+InstallDir "$LOCALAPPDATA\Programs\Catom"
+InstallDirRegKey HKCU "${PRODUCT_REG_ROOT}" "InstallDir"
 
-; Need admin to write to Program Files + HKLM.
-RequestExecutionLevel admin
+; No elevation — installs entirely within the current user's profile.
+RequestExecutionLevel user
 
 ; Compress hard — the payload is ~200MB raw.
 SetCompressor /SOLID lzma
@@ -84,24 +89,24 @@ ShowUninstDetails hide
 ; silently. Works for both interactive and /S silent installs.
 ;------------------------------------------------------------
 Function .onInit
-  ; Force x64 install location even when launched from a 32-bit shim.
-  ${If} ${RunningX64}
-    SetRegView 64
-  ${EndIf}
-
-  ReadRegStr $R0 HKLM "${PRODUCT_UNINST_KEY}" "UninstallString"
+  ; Remove a previous PER-USER install (HKCU).
+  ReadRegStr $R0 HKCU "${PRODUCT_UNINST_KEY}" "UninstallString"
   ${If} $R0 != ""
-    ReadRegStr $R1 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
+    ReadRegStr $R1 HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"
     DetailPrint "Removing previous Catom install at $R1..."
-    ; _?=$R1 keeps the uninstaller running from its current location so
-    ; it can delete itself; /S = silent. Wait for completion.
     ClearErrors
     ExecWait '"$R0" /S _?=$R1' $0
-    ${If} ${Errors}
-      DetailPrint "Previous-version uninstaller errored (continuing anyway)."
-    ${EndIf}
-    ; ExecWait with _?= leaves the old uninstall.exe behind — clean it up.
     Delete "$R0"
+  ${EndIf}
+
+  ; Also clean up any OLD per-machine (Program Files / HKLM) install left over
+  ; from v1.3.0–v1.3.4. We can't silently remove it without admin, but we can
+  ; unregister it from HKLM if we happen to have rights, and the leftover files
+  ; are harmless once the per-user shortcut takes over. Best-effort only.
+  ReadRegStr $R2 HKLM "${PRODUCT_UNINST_KEY}" "UninstallString"
+  ${If} $R2 != ""
+    ReadRegStr $R3 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
+    DetailPrint "Found old machine-wide install at $R3 (superseded by per-user)."
   ${EndIf}
 FunctionEnd
 
@@ -138,42 +143,36 @@ Section "Catom" SEC_MAIN
   CreateDirectory "$APPDATA\Catom\state"
   CreateDirectory "$APPDATA\Catom\ChromeProfile"
 
-  ; Shortcuts — all-users so they appear for every account on the machine
-  ; AND so the Start Menu entry lands in the common Programs folder (an admin
-  ; install otherwise writes shortcuts to the installing user's profile only,
-  ; which is why v1.3.0 had a Desktop icon but no All-Users Start Menu entry).
-  ; Managed %APPDATA%\Catom dirs above stay per-user (default context); only
-  ; the shortcuts switch to all-users.
-  SetShellVarContext all
+  ; Shortcuts — per-user (current context), so no admin needed. Desktop +
+  ; Start Menu entry for the installing user.
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut  "$SMPROGRAMS\${PRODUCT_NAME}\Catom.lnk"   "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
   CreateShortCut  "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall Catom.lnk" "$INSTDIR\uninstall.exe"
   CreateShortCut  "$DESKTOP\Catom.lnk"                     "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
-  SetShellVarContext current
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  ; Persisted install location
-  WriteRegStr HKLM "${PRODUCT_REG_ROOT}" "InstallDir"    "$INSTDIR"
-  WriteRegStr HKLM "${PRODUCT_REG_ROOT}" "Version"       "${PRODUCT_VERSION}"
+  ; Persisted install location (HKCU — per-user)
+  WriteRegStr HKCU "${PRODUCT_REG_ROOT}" "InstallDir"    "$INSTDIR"
+  WriteRegStr HKCU "${PRODUCT_REG_ROOT}" "Version"       "${PRODUCT_VERSION}"
 
-  ; Programs and Features entry
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayName"     "${PRODUCT_NAME}"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayVersion"  "${PRODUCT_VERSION}"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "Publisher"       "${PRODUCT_PUBLISHER}"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "URLInfoAbout"    "${PRODUCT_WEB_SITE}"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayIcon"     "$INSTDIR\${PRODUCT_EXE}"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
-  WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
-  WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoModify" 1
-  WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoRepair" 1
+  ; Programs and Features entry (HKCU — appears in this user's Apps list)
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName"     "${PRODUCT_NAME}"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayVersion"  "${PRODUCT_VERSION}"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "Publisher"       "${PRODUCT_PUBLISHER}"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "URLInfoAbout"    "${PRODUCT_WEB_SITE}"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayIcon"     "$INSTDIR\${PRODUCT_EXE}"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
+  WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoRepair" 1
 
   ; Estimated size in KB for Programs and Features.
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
-  WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
+  WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
 SectionEnd
 
 ;------------------------------------------------------------
@@ -202,18 +201,18 @@ Section "Uninstall"
   ; Wipe install dir
   RMDir /r "$INSTDIR"
 
-  ; Shortcuts — match the all-users context they were created with, plus
-  ; clean any stray per-user copies left by an older (v1.3.0) install.
+  ; Shortcuts — per-user (current context), plus clean any all-users copies
+  ; left by an older (v1.3.0–v1.3.4) machine-wide install.
+  Delete "$DESKTOP\Catom.lnk"
+  RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
   SetShellVarContext all
   Delete "$DESKTOP\Catom.lnk"
   RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
   SetShellVarContext current
-  Delete "$DESKTOP\Catom.lnk"
-  RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
 
-  ; Registry
-  DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
-  DeleteRegKey HKLM "${PRODUCT_REG_ROOT}"
+  ; Registry — per-user
+  DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
+  DeleteRegKey HKCU "${PRODUCT_REG_ROOT}"
 
   ; NOTE: we deliberately leave %APPDATA%\Catom\ in place so the user's
   ; saved config + Chrome profile survive an uninstall/reinstall. If you

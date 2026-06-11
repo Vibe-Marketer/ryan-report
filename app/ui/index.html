@@ -349,7 +349,9 @@
   </div>
   <div class="header-right" id="nav-tabs" style="display:none;">
     <button class="tab-btn active" id="tab-run" onclick="showPage('run')">Run</button>
-    <button class="tab-btn" id="tab-reports" onclick="showPage('reports')">Reports</button>
+    <!-- Reports tab edits the Axon navigation steps — advanced/dev only, hidden
+         from clients so it can't be broken. The report definitions still run. -->
+    <button class="tab-btn" id="tab-reports" onclick="showPage('reports')" style="display:none;">Reports</button>
     <button class="tab-btn" id="tab-settings" onclick="showPage('settings')">Settings</button>
   </div>
 </div>
@@ -429,8 +431,6 @@
       <span class="spinner" id="spinner-all"></span>
       Run All
     </button>
-    <button class="btn btn-secondary" id="btn-download" onclick="runPipeline('download')">Download Only</button>
-    <button class="btn btn-secondary" id="btn-build" onclick="runPipeline('build')">Build Only</button>
     <button class="btn btn-secondary" id="btn-folder" onclick="openWorkbook()">Open Workbook</button>
     <button class="btn btn-secondary" id="btn-feedback" onclick="openFeedback()" style="margin-left:auto;">Report Issue</button>
     <button class="btn btn-secondary" id="btn-help" onclick="getHelp()">Get Help</button>
@@ -462,21 +462,19 @@
       </div>
     </div>
     <div class="settings-section">
-      <h3>Files</h3>
+      <h3>Your Ryan Spreadsheet</h3>
       <div class="field-row">
         <div class="field">
-          <label>Download Folder</label>
-          <input type="text" id="cfg-download-dir">
-        </div>
-        <button class="btn btn-secondary btn-sm" onclick="browseFolder('cfg-download-dir')">Browse</button>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Historical Ryan File (.xlsx or .csv)</label>
+          <label>Ryan Moves file (.xlsx)</label>
           <input type="text" id="cfg-historical">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="browseFile('cfg-historical')">Browse</button>
       </div>
+      <div class="hint">The file Catom appends new moves to. Everything else (downloads, the Distribution PDF) is managed automatically.</div>
+      <!-- Download folder is app-managed (%APPDATA%\Catom\downloads); the field
+           was removed. Kept as a hidden input so existing JS that reads it
+           doesn't break. -->
+      <input type="hidden" id="cfg-download-dir">
     </div>
     <div class="settings-section">
       <h3>Automatic Schedule</h3>
@@ -509,7 +507,10 @@
         </div>
       </div>
     </div>
-    <div class="settings-section">
+    <!-- Reports + Output Columns edit the Axon automation internals — advanced/
+         dev only, hidden from clients. The IDs stay so loadSettings() JS that
+         populates them doesn't error. -->
+    <div class="settings-section" style="display:none;">
       <h3>Reports</h3>
       <div id="reports-list" style="margin-bottom:12px;"></div>
       <div class="field-row" style="align-items:flex-end;">
@@ -523,12 +524,10 @@
         </div>
         <button class="btn btn-secondary btn-sm" onclick="addReport()" style="margin-bottom:16px;">Add</button>
       </div>
-      <div class="hint" style="margin-top:-8px;">Use " > " to separate menu levels. The last item is clicked, then Export runs automatically.</div>
     </div>
 
-    <div class="settings-section">
+    <div class="settings-section" style="display:none;">
       <h3>Output Columns</h3>
-      <div class="hint" style="margin-bottom:10px;">Choose which columns appear in the generated report.</div>
       <div id="output-columns" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;"></div>
     </div>
 
@@ -707,6 +706,19 @@
       showPage('setup');
       // Slim wizard: no defaults to pre-fill — just the xlsx Browse button.
     }
+
+    // Automatically check for an update on launch and show the banner if one
+    // exists. Runs from the page (after pywebviewready) so showUpdateBanner is
+    // guaranteed defined — fixes the race where the Python-side push fired
+    // before the page JS was ready, so the banner only appeared on manual check.
+    setTimeout(autoUpdateCheck, 1500);
+  }
+
+  async function autoUpdateCheck() {
+    try {
+      const info = await window.pywebview.api.check_for_update();
+      if (info && info.version) window.showUpdateBanner(info);
+    } catch (e) { /* offline / non-fatal */ }
   }
 
   // Manual "Check for updates" — gives explicit confirmation either way,
