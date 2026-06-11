@@ -126,16 +126,34 @@ FunctionEnd
 ; Program Files and the user only ever clicks a shortcut.
 ;------------------------------------------------------------
 Section "Catom" SEC_MAIN
-  ; CRITICAL: a running Catom.exe holds a lock on the files we're about to
-  ; overwrite, which throws NSIS's "Error opening file for writing ... Catom.exe"
-  ; (Abort/Retry/Ignore). This bites two paths:
-  ;   1) a manual reinstall while the app is open, and
-  ;   2) the in-app auto-updater, which launches this installer while Catom is
-  ;      still shutting down (apply_and_exit).
-  ; Kill any running Catom and wait for the OS to release the handle BEFORE we
-  ; touch the install dir. Best-effort + a short settle so the file is free.
+  ; CRITICAL: "Error opening file for writing ... Catom.exe" (Abort/Retry/Ignore).
+  ; Two distinct locks cause this and we defeat BOTH:
+  ;
+  ;   (a) Catom is RUNNING -> taskkill the process tree (app + WebView2 kids).
+  ;   (b) Catom.exe is locked even AFTER the process dies -> Windows Defender /
+  ;       SmartScreen / Explorer grabs the freshly-written-or-killed binary to
+  ;       scan it and briefly holds the handle. taskkill + a sleep does NOT fix
+  ;       this because the app is already gone — something else owns the file.
+  ;
+  ; The bulletproof trick (how Chrome/Electron updaters do it): you cannot
+  ; OVERWRITE a locked .exe, but Windows DOES let you RENAME it. So move the old
+  ; Catom.exe aside, which always succeeds, then File writes a fresh one into the
+  ; freed name. The renamed leftover is deleted now or on next reboot.
   nsExec::Exec 'taskkill /F /IM ${PRODUCT_EXE} /T'
-  Sleep 2000
+  nsExec::Exec 'taskkill /F /IM msedgewebview2.exe /T'
+  Sleep 1500
+
+  ${If} ${FileExists} "$INSTDIR\${PRODUCT_EXE}"
+    ClearErrors
+    Delete "$INSTDIR\${PRODUCT_EXE}"
+    ${If} ${Errors}
+      ; Still locked — rename it out of the way (this works even when locked).
+      Delete /REBOOTOK "$INSTDIR\Catom-old.exe"
+      ClearErrors
+      Rename "$INSTDIR\${PRODUCT_EXE}" "$INSTDIR\Catom-old.exe"
+      Delete /REBOOTOK "$INSTDIR\Catom-old.exe"
+    ${EndIf}
+  ${EndIf}
 
   SetOutPath "$INSTDIR"
   SetOverwrite on
