@@ -138,11 +138,18 @@ Section "Catom" SEC_MAIN
   CreateDirectory "$APPDATA\Catom\state"
   CreateDirectory "$APPDATA\Catom\ChromeProfile"
 
-  ; Shortcuts
+  ; Shortcuts — all-users so they appear for every account on the machine
+  ; AND so the Start Menu entry lands in the common Programs folder (an admin
+  ; install otherwise writes shortcuts to the installing user's profile only,
+  ; which is why v1.3.0 had a Desktop icon but no All-Users Start Menu entry).
+  ; Managed %APPDATA%\Catom dirs above stay per-user (default context); only
+  ; the shortcuts switch to all-users.
+  SetShellVarContext all
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut  "$SMPROGRAMS\${PRODUCT_NAME}\Catom.lnk"   "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
   CreateShortCut  "$SMPROGRAMS\${PRODUCT_NAME}\Uninstall Catom.lnk" "$INSTDIR\uninstall.exe"
   CreateShortCut  "$DESKTOP\Catom.lnk"                     "$INSTDIR\${PRODUCT_EXE}" "" "$INSTDIR\${PRODUCT_EXE}" 0
+  SetShellVarContext current
 
   ; Uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -195,7 +202,12 @@ Section "Uninstall"
   ; Wipe install dir
   RMDir /r "$INSTDIR"
 
-  ; Shortcuts
+  ; Shortcuts — match the all-users context they were created with, plus
+  ; clean any stray per-user copies left by an older (v1.3.0) install.
+  SetShellVarContext all
+  Delete "$DESKTOP\Catom.lnk"
+  RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
+  SetShellVarContext current
   Delete "$DESKTOP\Catom.lnk"
   RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
 
