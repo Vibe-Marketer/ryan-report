@@ -316,13 +316,34 @@
      diagnostic without the email-pingpong chase. -->
 <div id="feedback-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:20px;">
   <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:520px; width:100%; max-height:90vh; overflow-y:auto;">
-    <h2 style="font-size:18px; font-weight:600; margin-bottom:6px;">Report an Issue</h2>
-    <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px;">Tell Andrew what's wrong. We'll send him your last run's files, the app log, the current Distribution PDF, and your config (password redacted).</p>
+    <h2 style="font-size:18px; font-weight:600; margin-bottom:6px;">Submit a Ticket</h2>
+    <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px;">Tell us what's wrong. We'll attach your last run's files, the app log, the current Distribution PDF, and your config (password redacted) so it can be fixed fast.</p>
     <textarea id="feedback-message" placeholder="What's wrong?  (optional but helpful — e.g. 'move dates aren't showing on the Orland Park trip')" rows="5" style="width:100%; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:inherit; font-size:14px; resize:vertical; margin-bottom:14px;"></textarea>
     <div id="feedback-status" style="display:none; padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:12px;"></div>
     <div style="display:flex; gap:8px; justify-content:flex-end;">
       <button class="btn btn-secondary" id="fb-cancel" onclick="closeFeedback()">Cancel</button>
-      <button class="btn btn-primary" id="fb-send" onclick="submitFeedback()">Send to Andrew</button>
+      <button class="btn btn-primary" id="fb-send" onclick="submitFeedback()">Submit Ticket</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload PDF modal — client uploads the latest RIC Distribution Report.
+     Shows the current PDF's state, a Browse picker, the chosen filename, an
+     Attach button, and a confirmation. Same flow as Settings, surfaced as a
+     one-click popup from the Run page. -->
+<div id="pdf-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; max-width:520px; width:100%; max-height:90vh; overflow-y:auto;">
+    <h2 style="font-size:18px; font-weight:600; margin-bottom:6px;">Upload Distribution PDF</h2>
+    <p style="font-size:13px; color:var(--text-dim); margin-bottom:14px;">Upload the latest RIC Equipment Distribution Report. Catom reads it to fill in job numbers — upload a fresh one whenever RIC emails you an update.</p>
+    <div id="pdf-current" class="hint" style="margin-bottom:14px;">Checking current PDF…</div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+      <input type="text" id="pdf-selected" readonly placeholder="No file selected" style="flex:1; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:14px;">
+      <button class="btn btn-secondary" onclick="pdfBrowse()" style="white-space:nowrap;">Browse</button>
+    </div>
+    <div id="pdf-status" style="display:none; padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:12px;"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn btn-secondary" id="pdf-cancel" onclick="closePdfModal()">Cancel</button>
+      <button class="btn btn-primary" id="pdf-attach" onclick="pdfAttach()" disabled>Attach</button>
     </div>
   </div>
 </div>
@@ -429,16 +450,20 @@
   <div class="actions">
     <button class="btn btn-primary" id="btn-all" onclick="runPipeline('all')">
       <span class="spinner" id="spinner-all"></span>
-      Run All
+      Run Report
     </button>
-    <button class="btn btn-secondary" id="btn-folder" onclick="openWorkbook()">Open Report Folder</button>
-    <button class="btn btn-secondary" id="btn-feedback" onclick="openFeedback()" style="margin-left:auto;">Report Issue</button>
-    <!-- Get Help needs an Anthropic API key the client won't have — hidden
-         unless one is configured. Report Issue is the client support path. -->
-    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()" style="display:none;">Get Help</button>
+    <button class="btn btn-secondary" id="btn-pdf" onclick="openPdfModal()">Upload PDF</button>
+    <button class="btn btn-secondary" id="btn-feedback" onclick="openFeedback()">Submit Ticket</button>
+    <button class="btn btn-secondary" id="btn-folder" onclick="openWorkbook()" style="margin-left:auto;">Open Report Folder</button>
+    <!-- AI Help calls Claude to diagnose the last error. It needs an Anthropic
+         API key the client won't have, so it stays visibly disabled (grayed)
+         until a key is set in Settings → Advanced. Submit Ticket is the normal
+         client support path. -->
+    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()" disabled
+            title="Add an Anthropic API key in Settings → Advanced to enable AI Help.">AI Help</button>
   </div>
   <div class="log-area" id="log">
-    <div class="log-empty">Ready. Click "Run All" to download reports and build.</div>
+    <div class="log-empty">Ready. Click "Run Report" to download from Axon and build the Ryan report.</div>
   </div>
 </div>
 
@@ -717,13 +742,8 @@
     if (configured) {
       document.getElementById('nav-tabs').style.display = 'flex';
       showPage('run');
-      // Reveal "Get Help" only if an Anthropic API key is configured.
-      try {
-        const cfg = await window.pywebview.api.load_config();
-        if (cfg && cfg.anthropic_api_key) {
-          document.getElementById('btn-help').style.display = '';
-        }
-      } catch (e) { /* leave hidden */ }
+      // Gray/enable "AI Help" based on whether an Anthropic API key is set.
+      refreshHelpAvailability();
     } else {
       showPage('setup');
       // Slim wizard: no defaults to pre-fill — just the xlsx Browse button.
@@ -1043,6 +1063,9 @@
     msg.textContent = schedEnabled ? 'Settings saved -- ' + schedResult : 'Settings saved';
     msg.classList.add('show');
     setTimeout(() => msg.classList.remove('show'), 3000);
+
+    // An API key may have just been added/removed — re-gray AI Help accordingly.
+    refreshHelpAvailability();
   }
 
   async function browseFolder(inputId) {
@@ -1407,7 +1430,7 @@
     document.getElementById('feedback-message').value = '';
     document.getElementById('feedback-status').style.display = 'none';
     document.getElementById('fb-send').disabled = false;
-    document.getElementById('fb-send').textContent = 'Send to Andrew';
+    document.getElementById('fb-send').textContent = 'Submit Ticket';
     document.getElementById('fb-cancel').disabled = false;
     const ov = document.getElementById('feedback-overlay');
     ov.style.display = 'flex';
@@ -1436,8 +1459,8 @@
         status.style.background = 'rgba(34,197,94,0.15)';
         status.style.color = '#86efac';
         const kb = Math.round((result.size_bytes || 0) / 1024);
-        status.textContent = 'Sent ✓ Andrew will follow up. Closing…';
-        sendBtn.textContent = 'Sent';
+        status.textContent = 'Submitted ✓ We\'ll follow up. Closing…';
+        sendBtn.textContent = 'Submitted';
         cancelBtn.textContent = 'Close';
         cancelBtn.disabled = false;
         // Auto-close on success so the user isn't left to dismiss it manually.
@@ -1519,6 +1542,88 @@
       msg.style.color = 'var(--error)';
     }
     setTimeout(() => { msg.style.opacity = '0'; }, 6000);
+  }
+
+  // ----- AI Help availability (grayed unless an API key is set) -----
+  async function refreshHelpAvailability() {
+    const b = document.getElementById('btn-help');
+    if (!b) return;
+    try {
+      const cfg = await window.pywebview.api.load_config();
+      if (cfg && cfg.anthropic_api_key) {
+        b.disabled = false;
+        b.title = 'Ask Claude to diagnose the last error.';
+      } else {
+        b.disabled = true;
+        b.title = 'Add an Anthropic API key in Settings → Advanced to enable AI Help.';
+      }
+    } catch (e) { b.disabled = true; }
+  }
+
+  // ----- Upload PDF popup (Run page) -----
+  let _pdfPath = null;
+  async function openPdfModal() {
+    _pdfPath = null;
+    document.getElementById('pdf-selected').value = '';
+    const attach = document.getElementById('pdf-attach');
+    attach.disabled = true; attach.textContent = 'Attach';
+    document.getElementById('pdf-status').style.display = 'none';
+    document.getElementById('pdf-overlay').style.display = 'flex';
+    const cur = document.getElementById('pdf-current');
+    cur.textContent = 'Checking current PDF…'; cur.style.color = 'var(--text-dim)';
+    try {
+      const s = await window.pywebview.api.distribution_pdf_status();
+      if (s && s.exists) {
+        const kb = Math.round((s.size_bytes || 0) / 1024);
+        let age = '';
+        if (typeof s.age_days === 'number') {
+          age = s.age_days <= 0 ? 'uploaded today'
+              : s.age_days + ' day' + (s.age_days > 1 ? 's' : '') + ' old';
+        }
+        cur.textContent = 'Current PDF: loaded (' + kb + ' KB' + (age ? ', ' + age : '') + ').'
+          + (s.age_days >= 14 ? '  ⚠️ This one is getting old — a fresh upload keeps job numbers accurate.' : '');
+        cur.style.color = (s.age_days >= 14) ? 'var(--warning)' : 'var(--text-dim)';
+      } else {
+        cur.textContent = 'No PDF loaded yet. Upload the latest RIC Distribution Report so job numbers are accurate.';
+        cur.style.color = 'var(--warning)';
+      }
+    } catch (e) { cur.textContent = ''; }
+  }
+  function closePdfModal() {
+    document.getElementById('pdf-overlay').style.display = 'none';
+  }
+  async function pdfBrowse() {
+    const path = await window.pywebview.api.pick_file('Select the RIC Distribution Report PDF');
+    if (!path) return;
+    _pdfPath = path;
+    document.getElementById('pdf-selected').value = path.split(/[\\/]/).pop();
+    document.getElementById('pdf-attach').disabled = false;
+  }
+  async function pdfAttach() {
+    if (!_pdfPath) return;
+    const btn = document.getElementById('pdf-attach');
+    const st = document.getElementById('pdf-status');
+    btn.disabled = true; btn.textContent = 'Uploading…';
+    st.style.display = 'block'; st.style.background = 'var(--bg)'; st.style.color = 'var(--text-dim)';
+    st.textContent = 'Uploading PDF…';
+    try {
+      const r = await window.pywebview.api.upload_distribution_pdf(_pdfPath);
+      if (r && r.ok) {
+        st.style.background = 'rgba(34,197,94,0.15)'; st.style.color = '#86efac';
+        st.textContent = 'Uploaded ✓ Job numbers will use the new PDF. Closing…';
+        btn.textContent = 'Uploaded';
+        if (typeof refreshPdfStatus === 'function') refreshPdfStatus();
+        setTimeout(closePdfModal, 1800);
+      } else {
+        st.style.background = 'rgba(239,68,68,0.15)'; st.style.color = '#fca5a5';
+        st.textContent = 'Upload failed: ' + ((r && r.error) || 'unknown error');
+        btn.disabled = false; btn.textContent = 'Try Again';
+      }
+    } catch (e) {
+      st.style.background = 'rgba(239,68,68,0.15)'; st.style.color = '#fca5a5';
+      st.textContent = 'Upload failed: ' + String(e);
+      btn.disabled = false; btn.textContent = 'Try Again';
+    }
   }
 
   // ----- Auto-update banner -----
