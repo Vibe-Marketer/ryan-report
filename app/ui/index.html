@@ -431,9 +431,11 @@
       <span class="spinner" id="spinner-all"></span>
       Run All
     </button>
-    <button class="btn btn-secondary" id="btn-folder" onclick="openWorkbook()">Open Workbook</button>
+    <button class="btn btn-secondary" id="btn-folder" onclick="openWorkbook()">Open Report Folder</button>
     <button class="btn btn-secondary" id="btn-feedback" onclick="openFeedback()" style="margin-left:auto;">Report Issue</button>
-    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()">Get Help</button>
+    <!-- Get Help needs an Anthropic API key the client won't have — hidden
+         unless one is configured. Report Issue is the client support path. -->
+    <button class="btn btn-secondary" id="btn-help" onclick="getHelp()" style="display:none;">Get Help</button>
   </div>
   <div class="log-area" id="log">
     <div class="log-empty">Ready. Click "Run All" to download reports and build.</div>
@@ -443,7 +445,20 @@
 <!-- SETTINGS PAGE -->
 <div class="page" id="page-settings">
   <div class="settings">
-    <div class="settings-section">
+
+    <!-- Advanced toggle: everything that drives the automation lives behind
+         this, collapsed by default with a warning. -->
+    <div class="settings-section" style="border:1px solid var(--warning); background:rgba(234,179,8,0.06);">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div>
+          <strong style="color:var(--warning);">⚠️ Advanced Settings</strong>
+          <div class="hint" style="margin-top:2px;">Axon login, schedule, and report internals. Changing these can break report generation — only edit if you know what you're doing.</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="advanced-toggle" onclick="toggleAdvanced()" style="white-space:nowrap;">Show Advanced</button>
+      </div>
+    </div>
+
+    <div class="settings-section advanced-setting" style="display:none;">
       <h3>Axon Login</h3>
       <div class="field">
         <label>Axon URL</label>
@@ -476,7 +491,7 @@
            doesn't break. -->
       <input type="hidden" id="cfg-download-dir">
     </div>
-    <div class="settings-section">
+    <div class="settings-section advanced-setting" style="display:none;">
       <h3>Automatic Schedule</h3>
       <div class="field">
         <label>
@@ -510,7 +525,7 @@
     <!-- Reports + Output Columns edit the Axon automation internals — advanced/
          dev only, hidden from clients. The IDs stay so loadSettings() JS that
          populates them doesn't error. -->
-    <div class="settings-section" style="display:none;">
+    <div class="settings-section advanced-setting" style="display:none;">
       <h3>Reports</h3>
       <div id="reports-list" style="margin-bottom:12px;"></div>
       <div class="field-row" style="align-items:flex-end;">
@@ -526,7 +541,7 @@
       </div>
     </div>
 
-    <div class="settings-section" style="display:none;">
+    <div class="settings-section advanced-setting" style="display:none;">
       <h3>Output Columns</h3>
       <div id="output-columns" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;"></div>
     </div>
@@ -546,7 +561,7 @@
       <div id="cfg-pdf-msg" class="hint" style="margin-top:8px; color:var(--success); opacity:0; transition:opacity .3s;"></div>
     </div>
 
-    <div class="settings-section">
+    <div class="settings-section advanced-setting" style="display:none;">
       <h3>AI Troubleshooting (Optional)</h3>
       <div class="field">
         <label>Anthropic API Key</label>
@@ -702,6 +717,13 @@
     if (configured) {
       document.getElementById('nav-tabs').style.display = 'flex';
       showPage('run');
+      // Reveal "Get Help" only if an Anthropic API key is configured.
+      try {
+        const cfg = await window.pywebview.api.load_config();
+        if (cfg && cfg.anthropic_api_key) {
+          document.getElementById('btn-help').style.display = '';
+        }
+      } catch (e) { /* leave hidden */ }
     } else {
       showPage('setup');
       // Slim wizard: no defaults to pre-fill — just the xlsx Browse button.
@@ -1441,6 +1463,17 @@
   // ----- Open the folder where the user's Ryan xlsx lives -----
   async function openWorkbook() {
     await window.pywebview.api.open_folder('workbook');
+  }
+
+  // ----- Advanced settings show/hide -----
+  let _advancedShown = false;
+  function toggleAdvanced() {
+    _advancedShown = !_advancedShown;
+    document.querySelectorAll('.advanced-setting').forEach(el => {
+      el.style.display = _advancedShown ? '' : 'none';
+    });
+    document.getElementById('advanced-toggle').textContent =
+      _advancedShown ? 'Hide Advanced' : 'Show Advanced';
   }
 
   // ----- Distribution PDF management -----
