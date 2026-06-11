@@ -448,14 +448,46 @@ class PipelineAPI:
     def distribution_pdf_status(self) -> dict[str, Any]:
         p = _distribution_pdf_path()
         if not p.exists():
-            return {"exists": False, "path": str(p), "size_bytes": 0, "mtime": ""}
+            return {"exists": False, "path": str(p), "size_bytes": 0, "mtime": "", "age_days": None}
         st = p.stat()
+        age_days = int((datetime.datetime.now().timestamp() - st.st_mtime) // 86400)
         return {
             "exists": True,
             "path": str(p),
             "size_bytes": st.st_size,
             "mtime": datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            "age_days": age_days,
         }
+
+    def get_last_run_warnings(self) -> dict[str, Any]:
+        """How many moves in the most recent run had no job number. The UI polls
+        this after a run to decide whether to show the 'upload a fresh PDF' nudge."""
+        return {"missing_job_numbers": getattr(self, "_last_run_missing_jobs", 0)}
+
+    @staticmethod
+    def _count_missing_job_numbers(csv_path: str) -> int:
+        """Count generated rows whose From or To is a bare town (no job# prefix,
+        no shop '-CITY' suffix). That's the signal the Distribution PDF is stale
+        or missing coverage for those assets."""
+        import csv as _csv
+        import re as _re
+        path = Path(csv_path)
+        if not path.exists():
+            return 0
+        jobpat = _re.compile(r"^\d{3,4}\.\d")
+        def bare(v: str) -> bool:
+            v = (v or "").strip()
+            return bool(v) and not jobpat.match(v) and "-" not in v
+        n = 0
+        try:
+            with path.open("r", encoding="utf-8-sig", newline="") as fh:
+                for row in _csv.reader(fh):
+                    if len(row) >= 10 and row[0].strip().isdigit():
+                        if bare(row[8]) or bare(row[9]):  # From / To
+                            n += 1
+        except OSError:
+            return 0
+        return n
 
     def refresh_distribution_pdf(self) -> dict[str, Any]:
         """Force-redownload the Distribution PDF from R2. Used by Settings."""
@@ -900,6 +932,17 @@ class PipelineAPI:
 
                 # Append new rows to the xlsx file if it exists.
                 self._append_to_xlsx(historical, fresh_output)
+
+                # Need-based Distribution-PDF nudge: if this run produced moves
+                # with no resolvable job number (bare town in From/To), tell the
+                # user to upload a fresh RIC Distribution PDF — that's the data
+                # that fills job numbers. Only warns when there's a real gap.
+                self._last_run_missing_jobs = self._count_missing_job_numbers(fresh_output)
+                if self._last_run_missing_jobs > 0:
+                    self._log(
+                        f"[WARN] {self._last_run_missing_jobs} move(s) are missing job numbers. "
+                        f"Upload the latest RIC Distribution Report PDF in Settings to fill them."
+                    )
 
                 # Capture a snapshot of this run into last_run/ so the Report
                 # Issue button always has fresh diagnostic data to bundle.

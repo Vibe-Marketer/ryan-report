@@ -1081,11 +1081,28 @@
         if (allText.includes('[DONE]')) {
           setStatus('done', 'Complete');
           await showCelebration();
+          await maybeShowPdfNudge();
         }
         else if (allText.includes('[ERROR]')) setStatus('error', 'Failed');
         else setStatus('idle', 'Idle');
       }
     }, 500);
+  }
+
+  // After a run, if moves came back with no job number, nudge the user to
+  // upload a fresh RIC Distribution PDF (need-based, not a calendar nag).
+  async function maybeShowPdfNudge() {
+    try {
+      const w = await window.pywebview.api.get_last_run_warnings();
+      if (w && w.missing_job_numbers > 0) {
+        const n = w.missing_job_numbers;
+        appendLog('', 'dim');
+        appendLog('⚠️ ' + n + ' move' + (n>1?'s':'') + ' came back without a job number.', 'warn');
+        appendLog('Upload the latest RIC Distribution Report PDF in Settings to fill them in.', 'warn');
+        const go = confirm(n + ' move' + (n>1?'s are':' is') + ' missing a job number.\n\nUpload the latest RIC Distribution Report PDF now?');
+        if (go) { showPage('settings'); setTimeout(() => uploadDistributionPdf(), 300); }
+      }
+    } catch (e) { /* non-fatal */ }
   }
 
   async function getHelp() {
@@ -1422,9 +1439,17 @@
       const s = await window.pywebview.api.distribution_pdf_status();
       if (s && s.exists) {
         const kb = Math.round((s.size_bytes || 0) / 1024);
-        el.value = 'Loaded — ' + kb + ' KB · updated ' + (s.mtime || 'unknown');
+        let age = '';
+        if (typeof s.age_days === 'number') {
+          age = s.age_days <= 0 ? ' · uploaded today'
+              : ' · ' + s.age_days + ' day' + (s.age_days>1?'s':'') + ' old';
+          if (s.age_days >= 14) age += '  ⚠️ consider uploading a fresh one';
+        }
+        el.value = 'Loaded — ' + kb + ' KB' + age;
+        el.style.color = (s.age_days >= 14) ? 'var(--warning)' : '';
       } else {
-        el.value = 'No PDF loaded yet';
+        el.value = 'No PDF loaded yet — upload the latest RIC Distribution Report';
+        el.style.color = 'var(--warning)';
       }
     } catch (e) { el.value = 'Status unavailable'; }
   }
