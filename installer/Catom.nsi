@@ -126,6 +126,17 @@ FunctionEnd
 ; Program Files and the user only ever clicks a shortcut.
 ;------------------------------------------------------------
 Section "Catom" SEC_MAIN
+  ; CRITICAL: a running Catom.exe holds a lock on the files we're about to
+  ; overwrite, which throws NSIS's "Error opening file for writing ... Catom.exe"
+  ; (Abort/Retry/Ignore). This bites two paths:
+  ;   1) a manual reinstall while the app is open, and
+  ;   2) the in-app auto-updater, which launches this installer while Catom is
+  ;      still shutting down (apply_and_exit).
+  ; Kill any running Catom and wait for the OS to release the handle BEFORE we
+  ; touch the install dir. Best-effort + a short settle so the file is free.
+  nsExec::Exec 'taskkill /F /IM ${PRODUCT_EXE} /T'
+  Sleep 2000
+
   SetOutPath "$INSTDIR"
   SetOverwrite on
 
