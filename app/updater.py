@@ -41,6 +41,29 @@ DOWNLOAD_TIMEOUT_SECS = 600  # 10 min — installer is ~200MB on a slow connecti
 USER_AGENT = f"Catom/{__version__}"
 
 
+def _ulog(msg: str) -> None:
+    """Append an update-check line to the same catom.log main.py writes, so we
+    have hard evidence each check ran (and what it found) without a UI."""
+    try:
+        import datetime
+        import os
+        import platform
+        home = os.path.expanduser("~")
+        if platform.system() == "Windows":
+            base = os.environ.get("APPDATA", os.path.join(home, "AppData", "Roaming"))
+            log = os.path.join(base, "Catom", "catom.log")
+        elif platform.system() == "Darwin":
+            log = os.path.join(home, "Library", "Application Support", "Catom", "catom.log")
+        else:
+            log = os.path.join(home, ".config", "catom", "catom.log")
+        os.makedirs(os.path.dirname(log), exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(f"[{ts}] [UPDATE] {msg}\n")
+    except Exception:
+        pass
+
+
 def _parse_version(v: str) -> tuple[int, ...]:
     """'1.2.3' / 'v1.2.3' -> (1, 2, 3). Non-numeric segments are dropped."""
     cleaned = v.lstrip("vV").strip()
@@ -64,15 +87,19 @@ def check_for_update() -> dict | None:
         )
         with urllib.request.urlopen(req, timeout=CHECK_TIMEOUT_SECS) as resp:
             data = json.loads(resp.read())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError):
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
+        _ulog(f"check failed (running {__version__}): {type(exc).__name__}")
         return None
 
     latest = str(data.get("version", "")).strip()
     url = str(data.get("url", "")).strip()
     if not latest or not url:
+        _ulog(f"feed missing version/url (running {__version__})")
         return None
     if _parse_version(latest) <= _parse_version(__version__):
+        _ulog(f"up to date (running {__version__}, feed {latest})")
         return None
+    _ulog(f"UPDATE AVAILABLE: {__version__} -> {latest}")
     return {
         "version": latest,
         "url": url,

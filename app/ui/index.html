@@ -624,9 +624,10 @@
     <span class="elapsed-timer" id="elapsed-timer" style="display:none;"></span>
   </span>
   <span>
-    &copy; 2026 Evolved AI. All rights reserved.
+    <span id="app-version" title="Installed version">Catom</span>
+    | <a onclick="manualUpdateCheck()" id="check-updates-link">Check for updates</a>
+    <span id="update-check-status" style="color:var(--text-dim);"></span>
     | <a onclick="toggleSupport()">Support</a>
-    | <a onclick="openOutput()">Open output folder</a>
   </span>
 </div>
 
@@ -676,6 +677,13 @@
   // INIT -- check if configured, show setup or run page
   // ============================================================
   async function init() {
+    // Show the installed version in the status bar so the user always knows
+    // what they're running (and can see it change after an update).
+    try {
+      const v = await window.pywebview.api.get_app_version();
+      document.getElementById('app-version').textContent = 'Catom v' + v;
+    } catch (e) { /* leave default */ }
+
     const configured = await window.pywebview.api.is_configured();
     if (configured) {
       document.getElementById('nav-tabs').style.display = 'flex';
@@ -683,6 +691,34 @@
     } else {
       showPage('setup');
       // Slim wizard: no defaults to pre-fill — just the xlsx Browse button.
+    }
+  }
+
+  // Manual "Check for updates" — gives explicit confirmation either way,
+  // instead of relying only on the passive banner. Reuses the same update
+  // path: if newer, shows the banner; if current, says so inline.
+  async function manualUpdateCheck() {
+    const status = document.getElementById('update-check-status');
+    const link = document.getElementById('check-updates-link');
+    status.textContent = ' — checking...';
+    status.style.color = 'var(--text-dim)';
+    link.style.pointerEvents = 'none';
+    try {
+      const info = await window.pywebview.api.check_for_update();
+      if (info && info.version) {
+        status.textContent = ' — v' + info.version + ' available!';
+        status.style.color = 'var(--success)';
+        window.showUpdateBanner(info);
+      } else {
+        status.textContent = ' — you’re up to date ✓';
+        status.style.color = 'var(--success)';
+        setTimeout(() => { status.textContent = ''; }, 6000);
+      }
+    } catch (e) {
+      status.textContent = ' — couldn’t reach update server';
+      status.style.color = 'var(--error)';
+    } finally {
+      link.style.pointerEvents = '';
     }
   }
 
