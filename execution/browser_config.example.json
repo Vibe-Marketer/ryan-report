@@ -18,6 +18,17 @@
   "reports": [
     {
       "enabled": true,
+      "name": "new_ryan",
+      "steps": [
+        { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
+        { "action": "click_tab", "name": "Trucking", "wait_ms": 2000 },
+        { "action": "click_menu", "text": "Reporter Reports", "wait_ms": 3000 },
+        { "action": "click_menu", "text": "New RYAN", "wait_ms": 3000 },
+        { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 180000 }
+      ]
+    },
+    {
+      "enabled": true,
       "name": "order_master",
       "steps": [
         { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
@@ -28,6 +39,17 @@
         { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 600000 },
         { "action": "select_preset", "text": "Master Summary", "wait_ms": 1500 },
         { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 600000 }
+      ]
+    },
+    {
+      "enabled": true,
+      "name": "audit_info",
+      "steps": [
+        { "action": "click_tab", "name": "Contents", "wait_ms": 1000 },
+        { "action": "click_tab", "name": "Trucking", "wait_ms": 2000 },
+        { "action": "click_menu", "text": "Reporter Reports", "wait_ms": 3000 },
+        { "action": "click_menu", "text": "audit info", "wait_ms": 3000 },
+        { "action": "click_button", "text": "Export", "wait_ms": 1000, "triggers_download": true, "timeout_ms": 180000 }
       ]
     }
   ],
