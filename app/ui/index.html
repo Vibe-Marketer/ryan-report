@@ -1086,8 +1086,12 @@
   }
   function setButtons(disabled) {
     document.getElementById('btn-all').disabled = disabled;
-    document.getElementById('btn-download').disabled = disabled;
-    document.getElementById('btn-build').disabled = disabled;
+    // btn-download / btn-build were removed from the Run page in v1.3.7 but this
+    // function still referenced them — getElementById() returned null and
+    // `null.disabled = ...` threw, aborting runPipeline() on its 2nd line so the
+    // Run button silently did nothing. Guard so a missing button can never throw.
+    const dl = document.getElementById('btn-download'); if (dl) dl.disabled = disabled;
+    const bd = document.getElementById('btn-build');    if (bd) bd.disabled = disabled;
     document.getElementById('spinner-all').style.display = disabled ? 'inline-block' : 'none';
   }
   function appendLog(line, cssClass) {
