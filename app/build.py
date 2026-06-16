@@ -349,9 +349,17 @@ def build(debug: bool = False) -> None:
         # PyInstaller bundle silently lacks PDF support on Windows because
         # there's no system pdftotext binary to fall back to.
         "pdfplumber", "pdfminer", "pdfminer.six", "pdfminer.high_level",
+        # certifi: provides the CA bundle our ssl_context() pins. Without it
+        # the frozen build has no CA store and every HTTPS call (update check,
+        # installer download, distribution PDF, Claude API) fails with URLError.
+        "certifi",
     ]
     for imp in hidden:
         cmd.extend(["--hidden-import", imp])
+
+    # Ship certifi's cacert.pem DATA file (not just the module) so
+    # certifi.where() resolves to a real path inside the frozen app.
+    cmd.extend(["--collect-data", "certifi"])
 
     print(f"Building '{name}' for {platform.system()}...")
     _run(cmd)

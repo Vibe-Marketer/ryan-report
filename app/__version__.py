@@ -5,4 +5,4 @@ Bump this on every release. CI reads it to stamp the NSIS installer and the
 `v1.0.3` here -> tag `v1.0.3`).
 """
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"

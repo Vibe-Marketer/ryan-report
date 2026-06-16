@@ -193,7 +193,10 @@ def _ensure_distribution_pdf(force: bool = False) -> Path | None:
             DISTRIBUTION_PDF_URL,
             headers={"User-Agent": f"Catom/{__version__}"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # Use the certifi-backed SSL context: a frozen Windows build has no
+        # system CA store, so a bare urlopen would fail TLS verification here
+        # exactly like the update check did.
+        with updater._urlopen(req, timeout=30) as resp:
             data = resp.read()
         dest.write_bytes(data)
         _file_log(f"[INFO] Distribution PDF fetched ({len(data)} bytes) -> {dest}")
@@ -1359,7 +1362,7 @@ class PipelineAPI:
                 },
             )
 
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with updater._urlopen(req, timeout=15) as resp:
                 result = json.loads(resp.read())
                 return result["content"][0]["text"]
 
@@ -1367,6 +1370,69 @@ class PipelineAPI:
             return f"API error ({e.code}): Check that your API key is valid."
         except Exception as e:
             return f"Could not reach Claude: {e}\n\nCheck your internet connection and try again."
+
+
+# ---------------------------------------------------------------------------
+# WebView2 runtime detection (Windows). See main()'s preflight for why a
+# missing runtime is fatal rather than a silent MSHTML fallback.
+# ---------------------------------------------------------------------------
+
+def _webview2_runtime_present() -> bool:
+    """True if the Edge WebView2 Evergreen Runtime is installed.
+
+    The runtime registers its version under a well-known registry key (both
+    per-machine and per-user installs). We check both. If the key is missing
+    or empty, WebView2 isn't usable and the HTML UI would be dead.
+
+    Errors are treated as 'present' (return True) so we never block launch over
+    a detection quirk — the pinned gui='edgechromium' backend will still raise
+    loudly at webview.start() if the runtime is truly unusable.
+    """
+    if platform.system() != "Windows":
+        return True
+    try:
+        import winreg  # type: ignore
+    except Exception:
+        return True
+
+    key_path = (
+        r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"
+        r"\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    )
+    hives = (
+        (winreg.HKEY_LOCAL_MACHINE, key_path),
+        (winreg.HKEY_CURRENT_USER, key_path),
+        # 64-bit view (no WOW6432Node) for completeness.
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SOFTWARE\Microsoft\EdgeUpdate\Clients"
+         r"\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
+    )
+    for hive, path in hives:
+        try:
+            with winreg.OpenKey(hive, path) as k:
+                version, _ = winreg.QueryValueEx(k, "pv")
+                if version and str(version) not in ("", "0.0.0.0"):
+                    return True
+        except FileNotFoundError:
+            continue
+        except Exception:
+            # Unexpected error reading the registry — don't block launch.
+            return True
+    return False
+
+
+def _show_native_error(title: str, message: str) -> None:
+    """Best-effort native message box so a fatal startup problem is visible
+    even when the HTML UI can't load. Windows only; no-op elsewhere."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+
+        MB_ICONERROR = 0x10
+        ctypes.windll.user32.MessageBoxW(0, message, title, MB_ICONERROR)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1383,6 +1449,34 @@ def main() -> None:
         api = PipelineAPI()
         api._run("all")
         sys.exit(0)
+
+    # WebView2 preflight (Windows). The UI is an HTML page whose buttons are
+    # wired with ES2017 `async` handlers (runPipeline, init). pywebview renders
+    # it through the EdgeChromium (WebView2) backend. If the WebView2 runtime is
+    # missing, pywebview SILENTLY falls back to MSHTML (legacy IE11/Trident),
+    # which cannot parse `async function` at all — so the ENTIRE <script> fails,
+    # `window.pywebview.api` is never wired, and every button (including Run
+    # Report) does nothing, with no error reaching catom.log. That is the
+    # "click Run, nothing happens, zero pipeline log lines" symptom: the Python
+    # side keeps running (the launch update check still logs) while the JS UI is
+    # inert. We refuse to launch into that silent-dead state.
+    if platform.system() == "Windows" and not _webview2_runtime_present():
+        _file_log(
+            "[FATAL] WebView2 runtime not found. Catom's UI cannot start and "
+            "every button would be dead. Install the Microsoft Edge WebView2 "
+            "Evergreen Runtime, then relaunch Catom. "
+            "https://developer.microsoft.com/microsoft-edge/webview2/"
+        )
+        _show_native_error(
+            "Catom can't start",
+            "Catom needs the Microsoft Edge WebView2 Runtime, which isn't "
+            "installed on this PC (or was removed/blocked by IT).\n\n"
+            "Without it the window opens but the buttons don't respond.\n\n"
+            "Fix: install 'Microsoft Edge WebView2 Runtime' (Evergreen), then "
+            "open Catom again. Ask IT if downloads are blocked.",
+        )
+        _file_log("=== Catom exiting (WebView2 missing) ===")
+        sys.exit(1)
 
     api = PipelineAPI()
     window = webview.create_window(
@@ -1405,7 +1499,14 @@ def main() -> None:
             api._start_background_update_check()
 
     try:
-        webview.start(_post_load_hooks, debug=("--debug" in sys.argv))
+        # gui='edgechromium' on Windows: pin the modern backend so pywebview
+        # NEVER silently degrades to MSHTML. With this set, a missing/broken
+        # WebView2 raises here (logged below + caught by the preflight above)
+        # instead of rendering a UI whose async JS can't run.
+        start_kwargs: dict[str, Any] = {"debug": ("--debug" in sys.argv)}
+        if platform.system() == "Windows":
+            start_kwargs["gui"] = "edgechromium"
+        webview.start(_post_load_hooks, **start_kwargs)
     except Exception:
         _file_log(f"webview.start raised:\n{traceback.format_exc()}")
         raise

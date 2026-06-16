@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,41 @@ UPDATE_FEED_URL = "https://updates.aisimple.co/catom/latest.json"
 CHECK_TIMEOUT_SECS = 8
 DOWNLOAD_TIMEOUT_SECS = 600  # 10 min — installer is ~200MB on a slow connection
 USER_AGENT = f"Catom/{__version__}"
+
+
+def ssl_context() -> ssl.SSLContext:
+    """A TLS context that always has a CA trust store, even when frozen.
+
+    Why this exists:
+      In a PyInstaller --onedir build on Windows, the embedded Python has NO
+      system CA bundle on `ssl`'s default search path. `urllib.request.urlopen`
+      then fails TLS verification with SSLCertVerificationError, which urllib
+      re-raises as `urllib.error.URLError`. That is the exact
+      `[UPDATE] check failed (...): URLError` the client hit on every launch —
+      while the SAME feed verified fine from the dev machine (which has certifi
+      / a system CA store on its path).
+
+      We pin the context to certifi's CA bundle. `certifi` is a pure-data wheel;
+      we add it to requirements + bundle it via PyInstaller --collect-data so
+      `certifi.where()` resolves inside the frozen app. If certifi somehow isn't
+      present, we fall back to the platform default context rather than crash —
+      the network call may still fail, but the app keeps running.
+    """
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def _urlopen(req: "urllib.request.Request | str", timeout: float):
+    """urlopen that always passes our certifi-backed SSL context for https.
+
+    Use this everywhere instead of bare urllib.request.urlopen so no network
+    path in the frozen build is left relying on the (missing) system CA store.
+    """
+    return urllib.request.urlopen(req, timeout=timeout, context=ssl_context())
 
 
 def _ulog(msg: str) -> None:
@@ -85,7 +121,7 @@ def check_for_update() -> dict | None:
             UPDATE_FEED_URL,
             headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"},
         )
-        with urllib.request.urlopen(req, timeout=CHECK_TIMEOUT_SECS) as resp:
+        with _urlopen(req, timeout=CHECK_TIMEOUT_SECS) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
         _ulog(f"check failed (running {__version__}): {type(exc).__name__}")
@@ -139,7 +175,7 @@ def download_installer(
             pass
 
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT_SECS) as resp:
+    with _urlopen(req, timeout=DOWNLOAD_TIMEOUT_SECS) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         downloaded = 0
         with dest.open("wb") as fh:
