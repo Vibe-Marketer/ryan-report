@@ -1,12 +1,39 @@
 ---
 slug: run-report-does-nothing
-status: awaiting_human_verify
+status: resolved
 trigger: "Customer (Eric Villa, CATOM-WKS01) submitted a support ticket: clicking Run Report does nothing. Suspected related to long-running auto-update / receive-updates issues. Check tickets, see what was received and why it failed."
 created: 2026-06-16
 updated: 2026-06-16
 ---
 
-## Resolution
+## RESOLVED + VERIFIED (2026-06-16, naegele-pc) — CORRECTION to the earlier hypothesis
+
+There were **two independent bugs**. The debugger conflated them and got Failure A wrong.
+
+- **Failure A (Run does nothing) — TRUE root cause:** `app/ui/index.html` `setButtons()` still
+  referenced `btn-download` and `btn-build`, which were deleted from the Run page in **v1.3.7**
+  (`581e25a`). `getElementById()` returned `null`, `null.disabled = ...` threw a `TypeError`, and
+  `runPipeline()` aborted on its **2nd line** before ever calling the Python API — no pipeline, no
+  log. `index.html` was unchanged from v1.3.7 → 2.0.1, so 1.3.13 (Eric) and 2.0.1 (naegele-pc) hit
+  it identically. **NOT** the WebView2/MSHTML backend (the window opened fine with WebView2 present
+  and the edgechromium pin in place, and Run STILL died — which is what disproved the backend
+  theory). Fix: guard `setButtons()` against missing buttons (v2.0.2).
+- **Failure B (URLError / can't update) — confirmed and fixed:** frozen build had no bundled CA
+  store → TLS verify failed. Fix: certifi-backed SSL context in `updater.py` (v2.0.1). Real, but
+  never the cause of the dead Run button.
+
+**End-to-end verification on naegele-pc (real Win11 hardware):**
+- 2.0.1 auto-update worked: `UPDATE AVAILABLE: 2.0.1 -> 2.0.2` → applied → relaunched → `up to date (running 2.0.2, feed 2.0.2)` — no URLError (Failure B fixed).
+- After update, Run Report fired: `[1/2] Downloading reports from Axon...` → browser launched → Axon login (Failure A fixed).
+
+**Customer recovery:** Eric's 1.3.13 has the broken updater and cannot auto-pull — needs a one-time
+manual install of `https://updates.aisimple.co/catom/Catom-Setup-v2.0.2.exe`, then auto-updates forever.
+
+**Learning (prevent recurrence):** a CI smoke-test that fails the build if `runPipeline` throws on a
+simulated click would have caught the `setButtons` regression at v1.3.7 instead of via a customer
+ticket months later. See `orchestration/TEST-FIRST-POLICY.md`.
+
+## Resolution (debugger's original — partially superseded; Failure A root cause corrected above)
 
 root_cause: |
   ONE shared root across both failures: the frozen PyInstaller Windows build
