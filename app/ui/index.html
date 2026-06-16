@@ -1142,6 +1142,7 @@
         if (allText.includes('[DONE]')) {
           setStatus('done', 'Complete');
           await showCelebration();
+          if (confirm('Report ready. Open the updated report now?')) { await openWorkbook(); }
           await maybeShowPdfNudge();
         }
         else if (allText.includes('[ERROR]')) setStatus('error', 'Failed');
@@ -1487,9 +1488,9 @@
     }
   }
 
-  // ----- Open the folder where the user's Ryan xlsx lives -----
+  // ----- Open the updated report workbook file (the historical Ryan xlsx) -----
   async function openWorkbook() {
-    await window.pywebview.api.open_folder('workbook');
+    await window.pywebview.api.open_report();
   }
 
   // ----- Advanced settings show/hide -----

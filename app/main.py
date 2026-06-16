@@ -273,6 +273,25 @@ def _apply_slim_defaults(cfg: dict) -> dict:
     return cfg
 
 
+# Reports dropped in v2.0.3: the build now reads the Order Master Summary
+# export, so "new_ryan" is unused (legacy fallback only) and "audit_info" is
+# referenced nowhere. Strip them from existing customer configs on load so
+# they stop being downloaded on the next launch.
+_LEGACY_DROPPED_REPORTS = {"new_ryan", "audit_info"}
+
+
+def _migrate_drop_legacy_reports(cfg: dict) -> dict:
+    """Remove unused legacy reports from the config in place. Idempotent."""
+    reports = cfg.get("reports")
+    if isinstance(reports, list):
+        cfg["reports"] = [
+            r
+            for r in reports
+            if not (isinstance(r, dict) and r.get("name") in _LEGACY_DROPPED_REPORTS)
+        ]
+    return cfg
+
+
 def _legacy_bundled_config_paths() -> list[Path]:
     return [
         EXECUTION / "browser_config.json",
@@ -379,6 +398,9 @@ class PipelineAPI:
             return _apply_slim_defaults({})
         with source_path.open("r") as f:
             cfg = json.load(f)
+        # Drop legacy reports (new_ryan, audit_info) from existing customer
+        # configs so they stop downloading on the next launch.
+        cfg = _migrate_drop_legacy_reports(cfg)
         # Expand ${HOME}/%USERPROFILE% only in path-like fields. On Windows,
         # expandvars turns a literal "$$" into "$", which corrupts passwords.
         def _exp(o: Any, key: str = "") -> Any:
@@ -729,7 +751,8 @@ class PipelineAPI:
 
         # Historical file is handled separately with the missing file dialog.
         # Don't block the build here -- just check for required source CSVs.
-        required_prefixes = ["Order Master Report", "New RYAN"]
+        # New RYAN is no longer downloaded; the build uses the Order Master Summary export.
+        required_prefixes = ["Order Master Report"]
         for prefix in required_prefixes:
             if not self._latest_matching_file(dl_dir, prefix):
                 errors.append(f"Required source CSV not found in downloads: {prefix}*.csv")
@@ -1192,6 +1215,23 @@ class PipelineAPI:
             os.startfile(path)
         else:
             subprocess.Popen(["xdg-open", path])
+
+    def open_report(self) -> str:
+        """Open the updated report workbook file (the historical Ryan xlsx that
+        the build appends to). Falls back to its containing folder if the file
+        path is unset or missing. Returns a short status string for the UI."""
+        cfg = self.load_config()
+        report = Path(cfg.get("historical_ryan", "") or "")
+        if report and report.exists():
+            self.open_folder(str(report))
+            return "opened"
+        # No usable file path -- open the containing folder if we have one,
+        # otherwise the managed downloads dir, so the user can find the report.
+        target = report.parent if str(report) else Path(cfg.get("downloads", {}).get("directory", ""))
+        if target and target.exists():
+            self.open_folder(str(target))
+            return "opened_folder"
+        return "not_found"
 
     # -- Scheduling --
 
