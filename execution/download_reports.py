@@ -686,6 +686,17 @@ def run_report(page: Page, report: dict[str, Any], downloads_dir: Path) -> list[
                 run_step(page, step)
             download = dl.value
             target = downloads_dir / download.suggested_filename
+            # Both Order Master presets (Detail, then Summary) download under the
+            # same suggested filename. Without this, the second export overwrites
+            # the first and the Detail report (the ONLY source of truck-driver
+            # data) is lost before the build reads it. De-dupe so both survive;
+            # the build classifies Detail vs Summary by content, not filename.
+            if target.exists():
+                stem, suffix = target.stem, target.suffix
+                k = 2
+                while target.exists():
+                    target = downloads_dir / f"{stem} ({k}){suffix}"
+                    k += 1
             download.save_as(str(target))
             print(f"  saved: {target.name}")
             downloads.append(target)

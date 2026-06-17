@@ -379,6 +379,23 @@ class PipelineAPI:
             return _apply_slim_defaults({})
         with source_path.open("r") as f:
             cfg = json.load(f)
+        # Report automation steps are APP-MANAGED, not user data: the Axon
+        # navigation/export sequence is defined canonically in the bundled
+        # template. Always overwrite the user's "reports" with the template's so
+        # fixes to the export flow (e.g. preset selection, dual Detail+Summary
+        # export) reach existing installs on the next launch instead of being
+        # frozen in a stale on-disk config. Auth/historical/schedule are left
+        # untouched — only the reports list is force-managed.
+        if source_path != _template_config_path():
+            try:
+                tmpl = _template_config_path()
+                if tmpl.exists():
+                    with tmpl.open("r") as tf:
+                        canonical = json.load(tf)
+                    if isinstance(canonical.get("reports"), list):
+                        cfg["reports"] = canonical["reports"]
+            except (OSError, ValueError):
+                pass  # fall back to the user config's reports
         # Expand ${HOME}/%USERPROFILE% only in path-like fields. On Windows,
         # expandvars turns a literal "$$" into "$", which corrupts passwords.
         def _exp(o: Any, key: str = "") -> Any:
