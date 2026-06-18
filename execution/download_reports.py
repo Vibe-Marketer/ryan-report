@@ -459,17 +459,18 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
                 return a.toLowerCase().includes(b.toLowerCase());
             };
 
-            // 1) Native <select> matching 'preset'
+            // 1) Native <select>: prefer one whose OPTIONS match the target
+            //    text. A 'preset'-labeled select is a hint, not a requirement —
+            //    Axon's preset <select> isn't always labeled 'preset'.
             for (const sel of document.querySelectorAll('select')) {
                 if (!visible(sel)) continue;
-                const lbl = labelText(sel);
-                if (!lbl.includes('preset')) continue;
                 const options = Array.from(sel.options || []);
                 let chosen = -1;
                 if (targetText) {
                     chosen = options.findIndex(o => matchText(o.textContent || '', targetText));
                 }
-                if (chosen < 0 && targetIndex >= 0 && targetIndex < options.length) {
+                if (chosen < 0 && labelText(sel).includes('preset')
+                    && targetIndex >= 0 && targetIndex < options.length) {
                     chosen = targetIndex;
                 }
                 if (chosen < 0) continue;
@@ -519,8 +520,11 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
     if result.get("ok"):
         return str(result.get("value", target_text))
     if result.get("opened"):
-        # Trigger opened a popup. Wait briefly then click the matching option.
-        page.wait_for_timeout(500)
+        # Trigger opened a popup. Wait for the option list to render (Axon's SPA
+        # can be slow), then click the matching option. Broader selectors + a
+        # longer wait than before, because candidates=0 means the options simply
+        # weren't in the DOM/selectors yet.
+        page.wait_for_timeout(1500)
         result2 = page.evaluate(
             """({targetText, targetIndex}) => {
                 const visible = (el) => {
@@ -529,22 +533,41 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
                     return style.visibility !== 'hidden' && style.display !== 'none'
                         && rect.width > 0 && rect.height > 0;
                 };
+                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
                 const matchText = (a, b) => a && b && a.toLowerCase().includes(b.toLowerCase());
+                // Cast a wide net: any clickable/option-ish element with short text.
                 const items = Array.from(document.querySelectorAll(
-                    'option, [role="option"], li, a, .dropdown-item, .menu-item, .su-dropdown-item'
-                )).filter(visible);
+                    'option, [role="option"], [role="menuitem"], li, a, button,'
+                    + ' .dropdown-item, .menu-item, .su-dropdown-item, .su-option,'
+                    + ' [class*="option"], [class*="item"], [class*="preset"], td, span, div'
+                )).filter(visible).filter(el => {
+                    const t = norm(el.textContent);
+                    return t.length > 0 && t.length < 60;
+                });
                 let chosen = -1;
-                if (targetText) chosen = items.findIndex(i => matchText(i.textContent || '', targetText));
+                if (targetText) chosen = items.findIndex(i => matchText(norm(i.textContent), targetText));
                 if (chosen < 0 && targetIndex >= 0 && targetIndex < items.length) chosen = targetIndex;
-                if (chosen < 0) return {ok: false, reason: 'Trigger opened but no matching option', candidateCount: items.length};
+                if (chosen < 0) {
+                    // Diagnostic: surface what options ARE visible so we can fix
+                    // the selector without guessing.
+                    const seen = [...new Set(items.map(i => norm(i.textContent)))]
+                        .filter(t => t.length < 40).slice(0, 40);
+                    return {ok: false, reason: 'Trigger opened but no matching option',
+                            candidateCount: items.length, candidates: seen};
+                }
                 items[chosen].click();
-                return {ok: true, via: 'trigger+item', value: items[chosen].textContent || ''};
+                return {ok: true, via: 'trigger+item', value: norm(items[chosen].textContent)};
             }""",
             {"targetText": target_text, "targetIndex": target_index},
         )
         if result2.get("ok"):
             return str(result2.get("value", target_text))
-        raise RuntimeError(f"Preset trigger opened but option click failed: {result2.get('reason')} (candidates={result2.get('candidateCount', 0)})")
+        cands = result2.get("candidates") or []
+        raise RuntimeError(
+            f"Preset trigger opened but option click failed: {result2.get('reason')} "
+            f"(candidates={result2.get('candidateCount', 0)}); "
+            f"visible option texts seen: {cands}"
+        )
     raise RuntimeError(f"Could not select preset: {result.get('reason', 'unknown')}")
 
 

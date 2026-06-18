@@ -833,6 +833,17 @@ class PipelineAPI:
                     downloads_dir = Path(dl_cfg["downloads"]["directory"])
                     downloads_dir.mkdir(parents=True, exist_ok=True)
 
+                    # Scratch-clean: remove leftover CSVs from a prior (possibly
+                    # failed) run so a download failure can't silently reuse stale
+                    # data and build on yesterday's report. The downloads dir holds
+                    # only transient inputs/outputs; the historical workbook lives
+                    # elsewhere as .xlsx, so this never touches real data.
+                    for _stale in downloads_dir.glob("*.csv"):
+                        try:
+                            _stale.unlink()
+                        except OSError:
+                            pass
+
                     self._log("[INFO] Launching bundled browser...")
                     context, pw = launch_context(dl_cfg)
                     self._log("[INFO] Browser ready")
