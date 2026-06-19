@@ -256,11 +256,25 @@ def _existing_keys(ws) -> set[tuple[str, str, str, str, str]]:
 
 
 def _parse_d_mmm(s: str, today: _dt.date | None = None) -> _dt.datetime | None:
-    """Parse a date string formatted by build_ryan_report.format_move_date."""
+    """Parse a move-date string into a datetime.
+
+    Accepts BOTH the 'd-mmm' form produced by build_ryan_report.format_move_date
+    (e.g. '16-Jun') AND full dates like '06/16/2026' / '2026-06-16' that flow
+    through from the source reports. The full-date case used to fail here, which
+    silently blanked the Date column in the workbook — the #1 'missing date' bug.
+    """
     s = (s or "").strip()
     if not s:
         return None
     today = today or _dt.date.today()
+    # Full-date formats already carry their year — take them verbatim.
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%-m/%-d/%Y"):
+        try:
+            return _dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    # 'd-mmm' forms have no year — assume the current year, rolling back if that
+    # lands more than 60 days in the future.
     parsed = None
     for fmt in ("%d-%b", "%-d-%b"):
         try:

@@ -493,146 +493,49 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
     except Exception:
         pass
 
-    result = page.evaluate(
-        """({targetText, targetIndex}) => {
-            const visible = (el) => {
-                if (!el) return false;
-                const style = window.getComputedStyle(el);
-                const rect = el.getBoundingClientRect();
-                return style.visibility !== 'hidden' && style.display !== 'none'
-                    && rect.width > 0 && rect.height > 0;
-            };
-            const labelText = (el) => {
-                const parts = [];
-                for (const attr of ['aria-label', 'placeholder', 'name', 'id', 'title']) {
-                    const v = el.getAttribute(attr);
-                    if (v) parts.push(v);
-                }
-                if (el.id) {
-                    const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-                    if (lab) parts.push(lab.textContent || '');
-                }
-                let parent = el.parentElement;
-                for (let i = 0; parent && i < 3; i += 1, parent = parent.parentElement) {
-                    parts.push(parent.textContent || '');
-                }
-                return parts.join(' ').replace(/\\s+/g, ' ').toLowerCase();
-            };
-            const matchText = (a, b) => {
-                if (!a || !b) return false;
-                return a.toLowerCase().includes(b.toLowerCase());
-            };
+    # Axon is a Sencha (su-*) SPA: the preset control is a custom "Presets"
+    # button that opens a menu, NOT a native <select>. Sencha ignores synthetic
+    # JS .click(), so we drive it with Playwright's NATIVE click (real mouse
+    # events): open the Presets menu, then click the named option.
+    try:
+        page.locator("button:has-text('Presets')").first.click(timeout=10000)
+    except Exception as exc:
+        raise RuntimeError(f"Could not open the Presets menu: {exc}")
+    page.wait_for_timeout(1200)  # let the menu render
 
-            // 1) Native <select>: prefer one whose OPTIONS match the target
-            //    text. A 'preset'-labeled select is a hint, not a requirement —
-            //    Axon's preset <select> isn't always labeled 'preset'.
-            for (const sel of document.querySelectorAll('select')) {
-                if (!visible(sel)) continue;
-                const options = Array.from(sel.options || []);
-                let chosen = -1;
-                if (targetText) {
-                    chosen = options.findIndex(o => matchText(o.textContent || '', targetText));
-                }
-                if (chosen < 0 && labelText(sel).includes('preset')
-                    && targetIndex >= 0 && targetIndex < options.length) {
-                    chosen = targetIndex;
-                }
-                if (chosen < 0) continue;
-                sel.selectedIndex = chosen;
-                sel.dispatchEvent(new Event('change', {bubbles: true}));
-                sel.dispatchEvent(new Event('input', {bubbles: true}));
-                return {ok: true, via: 'select', value: options[chosen].textContent || ''};
-            }
+    option = None
+    for _getter in (
+        lambda: page.get_by_text(target_text, exact=True),
+        lambda: page.get_by_text(target_text, exact=False),
+        lambda: page.locator(f'text="{target_text}"'),
+    ):
+        try:
+            _loc = _getter().first
+            _loc.wait_for(state="visible", timeout=4000)
+            option = _loc
+            break
+        except Exception:
+            continue
 
-            // 2) Custom dropdown trigger — find a button-like element labeled
-            //    'Preset' / 'Presets', click it, then click the matching option.
-            const triggers = Array.from(document.querySelectorAll(
-                'button, [role="button"], .su-dropdown, .preset-selector, select-button'
-            )).filter(visible);
-            const presetTrigger = triggers.find(t =>
-                /preset/i.test(t.textContent || '') || /preset/i.test(labelText(t))
-            );
-            if (presetTrigger) {
-                presetTrigger.click();
-                // Give the popup a moment to open synchronously isn't reliable in JS;
-                // we expose the trigger and then rely on a follow-up click() in Python
-                // via a separate evaluate. Return {ok: false, opened: true} so the
-                // caller can do the second click after a wait.
-                return {ok: false, opened: true, via: 'trigger', triggerText: presetTrigger.textContent || ''};
-            }
+    if option is None:
+        try:
+            menu = page.evaluate(
+                "() => Array.from(document.querySelectorAll('*'))"
+                ".filter(el => { const r = el.getBoundingClientRect();"
+                " return r.width > 0 && r.height > 0; })"
+                ".map(el => (el.textContent || '').trim())"
+                ".filter(t => t.length > 0 && t.length < 40 && /master|detail|summary/i.test(t))"
+                ".slice(0, 30)"
+            )
+            with (_session_state_path().parent / "preset_debug.txt").open("a", encoding="utf-8") as _f:
+                _f.write(f"--- MENU OPEN want {target_text!r} saw {json.dumps(menu)} ---\n")
+        except Exception:
+            pass
+        raise RuntimeError(f"Presets menu opened but no option matching {target_text!r}")
 
-            // 3) Last resort: search ALL visible options/menu items for the text
-            const items = Array.from(document.querySelectorAll(
-                'option, [role="option"], li, a, .dropdown-item, .menu-item'
-            )).filter(visible);
-            let chosen = -1;
-            if (targetText) {
-                chosen = items.findIndex(i => matchText(i.textContent || '', targetText));
-            }
-            if (chosen < 0 && targetIndex >= 0 && targetIndex < items.length) {
-                chosen = targetIndex;
-            }
-            if (chosen >= 0) {
-                items[chosen].click();
-                return {ok: true, via: 'fallback-item', value: items[chosen].textContent || ''};
-            }
-
-            return {ok: false, reason: 'No preset selector or matching option found'};
-        }""",
-        {"targetText": target_text, "targetIndex": target_index},
-    )
-    if result.get("ok"):
-        return str(result.get("value", target_text))
-    if result.get("opened"):
-        # Trigger opened a popup. Wait for the option list to render (Axon's SPA
-        # can be slow), then click the matching option. Broader selectors + a
-        # longer wait than before, because candidates=0 means the options simply
-        # weren't in the DOM/selectors yet.
-        page.wait_for_timeout(1500)
-        result2 = page.evaluate(
-            """({targetText, targetIndex}) => {
-                const visible = (el) => {
-                    const style = window.getComputedStyle(el);
-                    const rect = el.getBoundingClientRect();
-                    return style.visibility !== 'hidden' && style.display !== 'none'
-                        && rect.width > 0 && rect.height > 0;
-                };
-                const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
-                const matchText = (a, b) => a && b && a.toLowerCase().includes(b.toLowerCase());
-                // Cast a wide net: any clickable/option-ish element with short text.
-                const items = Array.from(document.querySelectorAll(
-                    'option, [role="option"], [role="menuitem"], li, a, button,'
-                    + ' .dropdown-item, .menu-item, .su-dropdown-item, .su-option,'
-                    + ' [class*="option"], [class*="item"], [class*="preset"], td, span, div'
-                )).filter(visible).filter(el => {
-                    const t = norm(el.textContent);
-                    return t.length > 0 && t.length < 60;
-                });
-                let chosen = -1;
-                if (targetText) chosen = items.findIndex(i => matchText(norm(i.textContent), targetText));
-                if (chosen < 0 && targetIndex >= 0 && targetIndex < items.length) chosen = targetIndex;
-                if (chosen < 0) {
-                    // Diagnostic: surface what options ARE visible so we can fix
-                    // the selector without guessing.
-                    const seen = [...new Set(items.map(i => norm(i.textContent)))]
-                        .filter(t => t.length < 40).slice(0, 40);
-                    return {ok: false, reason: 'Trigger opened but no matching option',
-                            candidateCount: items.length, candidates: seen};
-                }
-                items[chosen].click();
-                return {ok: true, via: 'trigger+item', value: norm(items[chosen].textContent)};
-            }""",
-            {"targetText": target_text, "targetIndex": target_index},
-        )
-        if result2.get("ok"):
-            return str(result2.get("value", target_text))
-        cands = result2.get("candidates") or []
-        raise RuntimeError(
-            f"Preset trigger opened but option click failed: {result2.get('reason')} "
-            f"(candidates={result2.get('candidateCount', 0)}); "
-            f"visible option texts seen: {cands}"
-        )
-    raise RuntimeError(f"Could not select preset: {result.get('reason', 'unknown')}")
+    option.click(timeout=8000)
+    page.wait_for_timeout(1500)  # let the preset apply/reload the grid
+    return target_text
 
 
 def _set_end_date_today(page: Page, value: str | None = None) -> str:
