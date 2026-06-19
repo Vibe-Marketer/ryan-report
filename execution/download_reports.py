@@ -185,8 +185,40 @@ def launch_context(config: dict[str, Any]) -> tuple[BrowserContext, Playwright]:
             f"'python -m playwright install chromium'."
         )
 
+    # Restore a previously-saved Axon session. Chromium does not reliably flush
+    # session cookies (incl. Axon's "remember this device" cookie that
+    # suppresses the email 2FA) to the profile when the browser is closed
+    # between runs — so we persist them explicitly after login and re-inject
+    # them here before navigating.
+    try:
+        sp = _session_state_path()
+        if sp.exists():
+            state = json.loads(sp.read_text(encoding="utf-8"))
+            cookies = state.get("cookies") or []
+            if cookies:
+                context.add_cookies(cookies)
+                print(f"[INFO] Restored {len(cookies)} saved session cookie(s)")
+    except Exception as exc:
+        print(f"[INFO] No saved session restored: {exc}")
+
     context.set_default_timeout(15000)
     return context, playwright
+
+
+def _session_state_path() -> Path:
+    """Where we persist the Axon session (cookies) between runs."""
+    return Path(_app_browser_profile_dir()).parent / "axon_session.json"
+
+
+def save_axon_session(page: Page) -> None:
+    """Persist the current session so the next run reuses Axon's device-trust
+    cookie and skips email 2FA. Best-effort; never raises into the pipeline."""
+    try:
+        state = page.context.storage_state()
+        _session_state_path().write_text(json.dumps(state), encoding="utf-8")
+        print(f"[INFO] Saved Axon session ({len(state.get('cookies') or [])} cookies)")
+    except Exception as exc:
+        print(f"[INFO] Could not save Axon session: {exc}")
 
 
 def close_session(context: BrowserContext, playwright: Playwright) -> None:

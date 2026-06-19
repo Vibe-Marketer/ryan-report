@@ -824,6 +824,7 @@ class PipelineAPI:
                 launch_context,
                 maybe_login,
                 run_report,
+                save_axon_session,
             )
 
             if mode in ("all", "download"):
@@ -854,6 +855,9 @@ class PipelineAPI:
                         self._log("[INFO] Logging in to Axon...")
                         maybe_login(page, dl_cfg)
                         self._log("[INFO] Logged in to Axon")
+                        # Persist the session so the NEXT run reuses Axon's
+                        # device-trust cookie and skips the email 2FA.
+                        save_axon_session(page)
 
                         self._downloaded_files: list[Path] = []
                         for report in dl_cfg["reports"]:
