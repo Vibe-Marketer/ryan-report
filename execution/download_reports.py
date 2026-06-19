@@ -461,6 +461,38 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
     target_text = (text or "").strip()
     target_index = -1 if index is None else int(index)
 
+    # DIAGNOSTIC: dump the preset-area DOM to a file so we can see exactly what
+    # the dropdown is (native <select> vs custom) and fix selection precisely
+    # instead of guessing. Best-effort; never breaks the run.
+    try:
+        diag = page.evaluate(
+            """() => {
+                const vis = (el) => { const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0; };
+                const out = {selects: [], presetish: []};
+                for (const sel of document.querySelectorAll('select')) {
+                    out.selects.push({
+                        id: sel.id || '', name: sel.name || '',
+                        cls: (sel.className || '').slice(0, 60),
+                        visible: vis(sel), value: sel.value,
+                        options: Array.from(sel.options).map(o => (o.textContent||'').trim()).slice(0, 30)
+                    });
+                }
+                for (const el of document.querySelectorAll('button,[role="button"],[role="combobox"],[class*="preset"],[class*="dropdown"],[aria-haspopup]')) {
+                    if (!vis(el)) continue;
+                    const t = (el.textContent || '').replace(/\\s+/g,' ').trim();
+                    if (t.length < 80) out.presetish.push({tag: el.tagName,
+                        cls: (el.className||'').slice(0,60), id: el.id||'', text: t});
+                }
+                return out;
+            }"""
+        )
+        dbg = _session_state_path().parent / "preset_debug.txt"
+        with dbg.open("a", encoding="utf-8") as _f:
+            _f.write(f"--- target={target_text!r} ---\n{json.dumps(diag)[:6000]}\n")
+    except Exception:
+        pass
+
     result = page.evaluate(
         """({targetText, targetIndex}) => {
             const visible = (el) => {
