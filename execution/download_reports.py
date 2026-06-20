@@ -493,31 +493,42 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
     except Exception:
         pass
 
-    # Axon is a Sencha (su-*) SPA: the preset control is a custom "Presets"
-    # button that opens a menu, NOT a native <select>. Sencha ignores synthetic
-    # JS .click(), so we drive it with Playwright's NATIVE click (real mouse
-    # events): open the Presets menu, then click the named option.
-    try:
-        page.locator("button:has-text('Presets')").first.click(timeout=10000)
-    except Exception as exc:
-        raise RuntimeError(f"Could not open the Presets menu: {exc}")
-    page.wait_for_timeout(1200)  # let the menu render
+    # Axon is a Sencha (su-*) SPA. The "Presets" control is a custom button that
+    # ignores synthetic JS clicks AND isn't reliably "actionable" for a Playwright
+    # locator click (it timed out). The robust path for these UIs: locate the
+    # element via JS to get its center, then fire a REAL mouse click at those
+    # coordinates (page.mouse) — real OS-level events Sencha responds to.
+    def _mouse_click_text(needle: str, button_only: bool) -> bool:
+        box = page.evaluate(
+            """({needle, buttonOnly}) => {
+                const vis = (el) => { const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0; };
+                const sel = buttonOnly ? 'button,[role="button"],a,[class*="button"]' : '*';
+                const n = needle.toLowerCase();
+                let exact = null, partial = null;
+                for (const el of document.querySelectorAll(sel)) {
+                    if (!vis(el)) continue;
+                    const t = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+                    if (!t || t.length > 40) continue;
+                    const r = el.getBoundingClientRect();
+                    const pt = {x: r.left + r.width / 2, y: r.top + r.height / 2};
+                    if (t.toLowerCase() === n) { exact = pt; break; }
+                    if (!partial && t.toLowerCase().includes(n)) partial = pt;
+                }
+                return exact || partial;
+            }""",
+            {"needle": needle, "buttonOnly": button_only},
+        )
+        if not box:
+            return False
+        page.mouse.click(box["x"], box["y"])
+        return True
 
-    option = None
-    for _getter in (
-        lambda: page.get_by_text(target_text, exact=True),
-        lambda: page.get_by_text(target_text, exact=False),
-        lambda: page.locator(f'text="{target_text}"'),
-    ):
-        try:
-            _loc = _getter().first
-            _loc.wait_for(state="visible", timeout=4000)
-            option = _loc
-            break
-        except Exception:
-            continue
+    if not _mouse_click_text("Presets", True):
+        raise RuntimeError("Could not find the Presets button")
+    page.wait_for_timeout(1500)  # let the menu render
 
-    if option is None:
+    if not _mouse_click_text(target_text, False):
         try:
             menu = page.evaluate(
                 "() => Array.from(document.querySelectorAll('*'))"
@@ -532,8 +543,6 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
         except Exception:
             pass
         raise RuntimeError(f"Presets menu opened but no option matching {target_text!r}")
-
-    option.click(timeout=8000)
     page.wait_for_timeout(1500)  # let the preset apply/reload the grid
     return target_text
 
