@@ -361,6 +361,19 @@ def build(debug: bool = False) -> None:
     # certifi.where() resolves to a real path inside the frozen app.
     cmd.extend(["--collect-data", "certifi"])
 
+    # Exclude numpy/pandas from the bundle. openpyxl optionally imports numpy
+    # and, at import time, builds a tuple including numpy.short/ushort/etc.
+    # PyInstaller drags an INCOMPLETE numpy into the frozen app -- importable
+    # but missing those attributes -- so openpyxl's `if NUMPY:` block raises
+    # `module 'numpy' has no attribute 'short'` and the build step crashes
+    # ([ERROR] Build failed: module 'numpy' has no attribute 'short'). We use
+    # numpy nowhere (our code reads CSV/xlsx via openpyxl's pure-Python path;
+    # pdfplumber needs only pdfminer/Pillow/pypdfium2), so dropping it makes
+    # openpyxl's `import numpy` fail cleanly (ImportError -> NUMPY=False) and
+    # the build proceeds. Bonus: a smaller installer.
+    for _excluded in ("numpy", "pandas"):
+        cmd.extend(["--exclude-module", _excluded])
+
     print(f"Building '{name}' for {platform.system()}...")
     _run(cmd)
 
