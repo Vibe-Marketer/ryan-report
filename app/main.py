@@ -69,6 +69,25 @@ def _user_config_dir() -> Path:
     return home / ".config" / "catom"
 
 
+def _local_app_dir() -> Path:
+    """Non-roaming, non-synced per-user app dir.
+
+    %LOCALAPPDATA% (AppData\\Local) never roams to a network share and is never
+    redirected by OneDrive Known Folder Move -- unlike %APPDATA% (Roaming),
+    which managed corporate profiles can relocate out from under a running
+    process. Transient pipeline working files (the report downloads) live here
+    so the folder a report is written to is always the same plain local folder
+    the build reads back from. macOS/Linux have no roaming profile, so this is
+    the same dir as the config dir.
+    """
+    system = platform.system()
+    home = Path.home()
+    if system == "Windows":
+        local = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
+        return local / "Catom"
+    return _user_config_dir()
+
+
 # ---------------------------------------------------------------------------
 # File logging — writes every UI log line + uncaught exceptions to disk so we
 # can debug failures without rebuilding with --console mode.
@@ -150,7 +169,13 @@ DISTRIBUTION_PDF_URL = "https://updates.aisimple.co/catom/distribution.pdf"
 
 
 def _managed_downloads_dir() -> Path:
-    p = _user_config_dir() / "downloads"
+    # Downloads are transient working files (wiped at the start of every run).
+    # Keep them in the NON-roaming local app dir so a redirected/roaming
+    # %APPDATA% on a managed machine can't move or sync them mid-pipeline --
+    # which would make a report download to one folder while the build looks in
+    # another (the proven "downloaded OK but not found" failure). See
+    # _local_app_dir().
+    p = _local_app_dir() / "downloads"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -752,6 +777,19 @@ class PipelineAPI:
             if not self._latest_matching_file(dl_dir, prefix):
                 errors.append(f"Required source CSV not found in downloads: {prefix}*.csv")
 
+        if errors:
+            # X-ray: dump the folder the build actually checked so a ticket tells
+            # us instantly which failure mode this is -- a path split (the dir
+            # differs from where the downloader wrote, listing shows other/no
+            # files) vs. a vanished file (dir matches but is empty -> AV/OneDrive
+            # ate the CSV after save_as reported success).
+            try:
+                listing = sorted(p.name for p in dl_dir.iterdir())
+            except OSError as exc:
+                listing = [f"<iterdir failed: {exc}>"]
+            self._log(f"[DIAG] preflight dir: {dl_dir}")
+            self._log(f"[DIAG] preflight dir holds {len(listing)} file(s): {listing}")
+
         return errors
 
     def _download_timeout_seconds(self, cfg: dict[str, Any]) -> int:
@@ -831,8 +869,18 @@ class PipelineAPI:
                 self._log("[1/2] Downloading reports from Axon...")
                 try:
                     dl_cfg = dl_load_config(Path(config))
-                    downloads_dir = Path(dl_cfg["downloads"]["directory"])
+                    # Single source of truth for the downloads folder. The
+                    # on-disk config can carry a path that no longer matches the
+                    # live managed dir (e.g. a roaming or redirected %APPDATA% on
+                    # a managed corporate machine). If the downloader writes to
+                    # the stale path while preflight/build look in the live
+                    # managed dir, every report downloads OK but the build can't
+                    # find them. Force the downloader onto the SAME managed dir
+                    # preflight uses so they can never diverge.
+                    downloads_dir = _managed_downloads_dir()
+                    dl_cfg["downloads"]["directory"] = str(downloads_dir)
                     downloads_dir.mkdir(parents=True, exist_ok=True)
+                    self._log(f"[DIAG] download dir: {downloads_dir}")
 
                     # Scratch-clean: remove leftover CSVs from a prior (possibly
                     # failed) run so a download failure can't silently reuse stale
