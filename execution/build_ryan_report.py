@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# openpyxl (imported lazily below) references numpy.short/etc. at import time; a
+# PyInstaller-frozen numpy can be importable but incomplete, crashing the build
+# with "module 'numpy' has no attribute 'short'". We use numpy nowhere, so force
+# its import to fail cleanly -> openpyxl falls back to pure Python. Unconditional
+# override so it beats any numpy PyInstaller pre-imported.
+import sys as _sys
+_sys.modules["numpy"] = None
+
 import argparse
 import csv
 import re

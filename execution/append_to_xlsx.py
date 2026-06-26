@@ -44,6 +44,16 @@ from copy import copy as _copy_style_obj
 from pathlib import Path
 from typing import Iterable
 
+# openpyxl optionally imports numpy and, at IMPORT time, builds a tuple
+# referencing numpy.short/ushort/etc. A PyInstaller-frozen numpy can be
+# importable but INCOMPLETE (missing those attributes) -- that import then
+# raises AttributeError and crashes the build ('module numpy has no attribute
+# short'). We use numpy nowhere, so force its import to fail cleanly so openpyxl
+# sets NUMPY=False and takes its pure-Python path. Unconditional override (not
+# setdefault) so it beats a numpy PyInstaller may have pre-imported.
+import sys as _sys
+_sys.modules["numpy"] = None
+
 from openpyxl import load_workbook
 from openpyxl.cell import Cell
 

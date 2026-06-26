@@ -880,6 +880,17 @@ class PipelineAPI:
                     downloads_dir = _managed_downloads_dir()
                     dl_cfg["downloads"]["directory"] = str(downloads_dir)
                     downloads_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Report steps are app-managed. dl_load_config reads the
+                    # on-disk config VERBATIM, so after an app update the
+                    # downloader would keep running the STALE on-disk steps (e.g.
+                    # the old 'Presets' button path) until something re-saves the
+                    # config -- which is why the first post-update run failed on
+                    # order_master while a later run worked. cfg already had the
+                    # bundled template's reports applied by self.load_config(), so
+                    # force the downloader onto those. Single source of truth.
+                    if isinstance(cfg.get("reports"), list) and cfg["reports"]:
+                        dl_cfg["reports"] = cfg["reports"]
                     self._log(f"[DIAG] download dir: {downloads_dir}")
 
                     # Scratch-clean: remove leftover CSVs from a prior (possibly
