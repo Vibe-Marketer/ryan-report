@@ -547,6 +547,48 @@ def _select_preset(page: Page, text: str | None = None, index: int | None = None
     return target_text
 
 
+def _select_report_format(page: Page, text: str) -> str:
+    """Select the Order Master Report output FORMAT via the native radio at the
+    bottom of the page: 'Detail', 'Summary Per Order', or 'Summary'.
+
+    This replaces the flaky 'Presets' dropdown button. Confirmed live against
+    Axon: the formats are native <input type=radio> with <label> text, BUT they
+    carry no shared `name`, so Sencha enforces single-selection through handlers
+    that fire only on TRUSTED events. A synthetic JS click checks one radio
+    WITHOUT unchecking the others and corrupts the selection. So we locate the
+    label by its EXACT direct text and fire a real page.mouse click at its
+    center (a trusted OS-level event Sencha honors) -- exactly how a user clicks
+    it. 'Summary Per Order' carries hours + serials + job# + dispatcher;
+    'Detail' carries the driver. The build merges both.
+    """
+    target = text.strip()
+    box = page.evaluate(
+        """(needle) => {
+            const vis = (el) => { const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0; };
+            // Match the LABEL whose OWN direct text equals the format name.
+            // Exact direct-text match avoids 'Summary Per Order Columns' etc.
+            for (const el of document.querySelectorAll('label')) {
+                if (!vis(el)) continue;
+                const direct = Array.from(el.childNodes)
+                    .filter(n => n.nodeType === 3)
+                    .map(n => n.textContent.trim()).join('').trim();
+                if (direct === needle) {
+                    const r = el.getBoundingClientRect();
+                    return {x: r.left + r.width / 2, y: r.top + r.height / 2};
+                }
+            }
+            return null;
+        }""",
+        target,
+    )
+    if not box:
+        raise RuntimeError(f"Could not find the '{target}' report-format radio")
+    page.mouse.click(box["x"], box["y"])
+    page.wait_for_timeout(1200)  # let Sencha apply the format + re-render columns
+    return target
+
+
 def _set_end_date_today(page: Page, value: str | None = None) -> str:
     """Set the current report page's end/to date field to today's date.
 
@@ -651,6 +693,10 @@ def run_step(page: Page, step: dict[str, Any]) -> None:
         index = step.get("index")
         result = _select_preset(page, text=text, index=index)
         print(f"  preset: {result}")
+
+    elif action == "select_report_format":
+        result = _select_report_format(page, step["text"])
+        print(f"  format: {result}")
 
     else:
         raise RuntimeError(f"Unsupported action: {action}")

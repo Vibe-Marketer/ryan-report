@@ -69,8 +69,8 @@
           "wait_ms": 3000
         },
         {
-          "action": "select_preset",
-          "text": "1 Master Detail",
+          "action": "select_report_format",
+          "text": "Summary Per Order",
           "wait_ms": 2500
         },
         {
@@ -85,8 +85,8 @@
           "timeout_ms": 600000
         },
         {
-          "action": "select_preset",
-          "text": "2 Master Summary",
+          "action": "select_report_format",
+          "text": "Detail",
           "wait_ms": 2500
         },
         {
