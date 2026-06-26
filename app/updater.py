@@ -100,6 +100,60 @@ def _ulog(msg: str) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# R2 signed-URL path. Some client networks (e.g. corporate content filters)
+# block the custom domain `updates.aisimple.co` by name, so the public feed at
+# UPDATE_FEED_URL never loads and the client is stuck on its installed version.
+# The raw R2 endpoint (`*.r2.cloudflarestorage.com`) is a recognized
+# cloud-storage host those filters allow -- it's the SAME host the feedback
+# uploader already reaches successfully. So we fetch the feed + installer via
+# short-lived SigV4 presigned URLs on that host, reusing the baked R2
+# credentials. generate_presigned_url is pure local signing (no network), so it
+# can't fail with URLError; the actual GET still goes through _urlopen + certifi.
+# Falls back to the public custom-domain URL when no R2 creds are baked (dev).
+# ---------------------------------------------------------------------------
+
+def _r2_config():
+    """(endpoint, access_key, secret_key, bucket) from baked creds/env, or None."""
+    import os
+    try:
+        from app import feedback_credentials as _c  # type: ignore
+    except ImportError:
+        try:
+            import feedback_credentials as _c  # type: ignore
+        except ImportError:
+            _c = None
+    ak = (getattr(_c, "R2_ACCESS_KEY_ID", "") if _c else "") or os.environ.get("R2_ACCESS_KEY_ID", "")
+    sk = (getattr(_c, "R2_SECRET_ACCESS_KEY", "") if _c else "") or os.environ.get("R2_SECRET_ACCESS_KEY", "")
+    ep = (getattr(_c, "R2_ENDPOINT_URL", "") if _c else "") or os.environ.get("R2_ENDPOINT_URL", "")
+    bk = (getattr(_c, "R2_BUCKET", "") if _c else "") or os.environ.get("R2_BUCKET", "catom-updates")
+    if ak and sk and ep and bk:
+        return ep, ak, sk, bk
+    return None
+
+
+def _r2_signed_url(key: str, expires: int = 600) -> str | None:
+    """Presign a GET for `key` in the updates bucket on the raw R2 host."""
+    cfg = _r2_config()
+    if not cfg:
+        return None
+    endpoint, ak, sk, bucket = cfg
+    try:
+        import boto3
+        from botocore.client import Config as _BotoConfig
+
+        s3 = boto3.client(
+            "s3", endpoint_url=endpoint,
+            aws_access_key_id=ak, aws_secret_access_key=sk,
+            config=_BotoConfig(signature_version="s3v4"), region_name="auto",
+        )
+        return s3.generate_presigned_url(
+            "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires,
+        )
+    except Exception:
+        return None
+
+
 def _parse_version(v: str) -> tuple[int, ...]:
     """'1.2.3' / 'v1.2.3' -> (1, 2, 3). Non-numeric segments are dropped."""
     cleaned = v.lstrip("vV").strip()
@@ -116,15 +170,23 @@ def check_for_update() -> dict | None:
 
     Synchronous network call. Use `check_async` to avoid blocking the UI thread.
     """
+    # Prefer the R2 host the client's network allows; fall back to the public
+    # custom domain. Log which path we used + the real error reason on failure
+    # (the bare exception name alone can't tell a cert error from a host block).
+    feed_url = _r2_signed_url("catom/latest.json")
+    via = "r2" if feed_url else "aisimple"
+    if not feed_url:
+        feed_url = UPDATE_FEED_URL
     try:
         req = urllib.request.Request(
-            UPDATE_FEED_URL,
+            feed_url,
             headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"},
         )
         with _urlopen(req, timeout=CHECK_TIMEOUT_SECS) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, OSError, json.JSONDecodeError, ValueError) as exc:
-        _ulog(f"check failed (running {__version__}): {type(exc).__name__}")
+        reason = getattr(exc, "reason", "") or str(exc)
+        _ulog(f"check failed (running {__version__}, via {via}): {type(exc).__name__}: {reason}")
         return None
 
     latest = str(data.get("version", "")).strip()
@@ -133,9 +195,15 @@ def check_for_update() -> dict | None:
         _ulog(f"feed missing version/url (running {__version__})")
         return None
     if _parse_version(latest) <= _parse_version(__version__):
-        _ulog(f"up to date (running {__version__}, feed {latest})")
+        _ulog(f"up to date (running {__version__}, feed {latest}, via {via})")
         return None
-    _ulog(f"UPDATE AVAILABLE: {__version__} -> {latest}")
+    # Download from the same R2 host the feed came through, not the (possibly
+    # blocked) aisimple.co url baked into the feed. Construct the installer key
+    # from the version and presign it; fall back to the feed's url.
+    signed_installer = _r2_signed_url(f"catom/Catom-Setup-v{latest}.exe", expires=900)
+    if signed_installer:
+        url = signed_installer
+    _ulog(f"UPDATE AVAILABLE: {__version__} -> {latest} (via {via})")
     return {
         "version": latest,
         "url": url,
