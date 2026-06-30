@@ -562,31 +562,48 @@ def _select_report_format(page: Page, text: str) -> str:
     'Detail' carries the driver. The build merges both.
     """
     target = text.strip()
-    box = page.evaluate(
-        """(needle) => {
-            const vis = (el) => { const r = el.getBoundingClientRect();
-                return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0; };
-            // Match the LABEL whose OWN direct text equals the format name.
-            // Exact direct-text match avoids 'Summary Per Order Columns' etc.
-            for (const el of document.querySelectorAll('label')) {
-                if (!vis(el)) continue;
-                const direct = Array.from(el.childNodes)
-                    .filter(n => n.nodeType === 3)
-                    .map(n => n.textContent.trim()).join('').trim();
-                if (direct === needle) {
-                    const r = el.getBoundingClientRect();
-                    return {x: r.left + r.width / 2, y: r.top + r.height / 2};
+    last_checked: bool | None = None
+    for _attempt in range(5):
+        # Find the label, SCROLL IT INTO VIEW (the radios sit at the bottom of a
+        # tall report page, usually below the viewport fold -- a raw page.mouse
+        # click at off-screen coords silently misses, which is exactly how a
+        # 'Detail' selection got skipped and both exports came out as Summary),
+        # then read its post-scroll center AND whether its radio is now checked.
+        info = page.evaluate(
+            """(needle) => {
+                const vis = (el) => { const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0; };
+                let lbl = null;
+                for (const el of document.querySelectorAll('label')) {
+                    if (!vis(el)) continue;
+                    const direct = Array.from(el.childNodes)
+                        .filter(n => n.nodeType === 3)
+                        .map(n => n.textContent.trim()).join('').trim();
+                    if (direct === needle) { lbl = el; break; }
                 }
-            }
-            return null;
-        }""",
-        target,
+                if (!lbl) return null;
+                lbl.scrollIntoView({block: 'center', inline: 'nearest'});
+                const r = lbl.getBoundingClientRect();
+                const forId = lbl.getAttribute('for');
+                const inp = forId ? document.getElementById(forId)
+                                  : lbl.querySelector('input');
+                return {x: r.left + r.width / 2, y: r.top + r.height / 2,
+                        checked: inp ? !!inp.checked : null};
+            }""",
+            target,
+        )
+        if not info:
+            raise RuntimeError(f"Could not find the '{target}' report-format radio")
+        last_checked = info.get("checked")
+        if last_checked:
+            page.wait_for_timeout(800)  # let any format-driven re-render settle
+            return target
+        page.mouse.click(info["x"], info["y"])
+        page.wait_for_timeout(1200)  # let Sencha apply the format + re-check radio
+    raise RuntimeError(
+        f"Clicked the '{target}' report-format radio but it never registered as "
+        f"checked (last checked={last_checked}); export would use the wrong format"
     )
-    if not box:
-        raise RuntimeError(f"Could not find the '{target}' report-format radio")
-    page.mouse.click(box["x"], box["y"])
-    page.wait_for_timeout(1200)  # let Sencha apply the format + re-render columns
-    return target
 
 
 def _set_end_date_today(page: Page, value: str | None = None) -> str:
